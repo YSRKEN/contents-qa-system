@@ -166,21 +166,24 @@ def window_score(positions: Sequence[int], hits: dict[float, float], width: int,
     return total
 
 
-def _claims_in_order(store: WorkStore) -> dict[int, list[int]]:
-    """出典ごとの主張IDを、原文での並び順で返す。
+def _claims_in_order(store: WorkStore) -> tuple[dict[int, list[int]], dict[tuple[int, str], list[int]]]:
+    """主張IDを原文での並び順で返す。出典ごとと、節ごとの2通り。
 
     主張IDは登録順でしかない。取り込み条件を変えて同じ出典を取り直すと、
     途中の文が後から末尾のIDで入るため、IDの順は原文の順と一致しなくなる。
     抽出時に原文中の位置（offset）を控えてあるので、そちらを優先して並べる。
     """
     order: dict[int, list[int]] = {}
+    sections: dict[tuple[int, str], list[int]] = {}
     for r in store.conn.execute(
-        "SELECT id, source_version_id AS sv FROM claims "
+        "SELECT id, text, source_version_id AS sv FROM claims "
         "WHERE status='active' AND source_version_id IS NOT NULL "
         "ORDER BY sv, (offset IS NULL), offset, id"
     ):
-        order.setdefault(int(r["sv"]), []).append(int(r["id"]))
-    return order
+        sv, cid = int(r["sv"]), int(r["id"])
+        order.setdefault(sv, []).append(cid)
+        sections.setdefault((sv, split_section(r["text"])[0]), []).append(cid)
+    return order, sections
 
 
 def _fetch_claims(store: WorkStore, ids: Sequence[int]) -> list[dict]:
@@ -248,10 +251,13 @@ def retrieve(
     terms = list(dict.fromkeys([*(t.strip() for t in extra_terms if t.strip()), *question_terms(question)]))
 
     scored: dict[int, tuple[int, dict]] = {}
+    # 見出しの一致を割り引く前の点。節を選ぶときはこちらを使う（下の bump を参照）
+    topical: dict[int, float] = {}
 
-    def bump(c: dict, points: float) -> None:
+    def bump(c: dict, points: float, full: float | None = None) -> None:
         prev = scored.get(c["id"])
         scored[c["id"]] = (prev[0] + points if prev else points, c)
+        topical[c["id"]] = topical.get(c["id"], 0.0) + (points if full is None else full)
 
     def matched_weight(c: dict, needles: Sequence[str], points: float) -> float:
         """本文に当たったのか、節見出しにだけ当たったのかで重みを変える。
@@ -283,8 +289,9 @@ def retrieve(
         # エンティティ一致は索引を引くだけで安いので、打ち切らずに全部見る。
         # ここを max_claims の数倍で打ち切ると、主人公のように何百件も付く人物では
         # 打ち切りの内側に入った出典だけが候補になり、出典の選び方が偶然で決まる。
+        w = entity_weight.get(name, 4.0)
         for c in store.search_claims(entity=name, limit=100000):
-            bump(c, matched_weight(c, names, entity_weight.get(name, 4.0)))
+            bump(c, matched_weight(c, names, w), full=w)
     weights = {t: term_weight(store, t, total) for t in terms}
     # ほぼ全件に当たる語は点数を支配するだけなので落とす。ただし全部落ちると
     # 何も返らなくなるので、その場合は重みの大きい順に2語だけ残す。
@@ -293,7 +300,8 @@ def retrieve(
         useful = [t for t, w in sorted(weights.items(), key=lambda kv: -kv[1]) if w > 0][:2]
     for t in useful:
         for c in store.search_claims(query=t, limit=max_claims * 3):
-            bump(c, matched_weight(c, [t], max(weights[t], 0.5)))
+            w = max(weights[t], 0.5)
+            bump(c, matched_weight(c, [t], w), full=w)
 
     ranked = sorted(
         scored.values(),
@@ -316,39 +324,99 @@ def retrieve(
         return min(sum(weights.get(t, 0) * 2 for t in terms if t and t in title), 8.0)
 
     # 節が材料を食い尽くさないように、全体の6割までに抑える
-    run_budget = max(8, int(max_claims * 0.6 / 3))
-    # 1出典あたりの持ち分を、離れた複数の区間に分けて使えるようにする
-    run_width = max(4, run_budget // 3)
-    run_slots = max(1, run_budget // run_width)
-    in_order = _claims_in_order(store)
-    hit_map = {svid: {c["id"]: score for score, c in items} for svid, items in by_source.items()}
-    windows: dict[int, list[tuple[int, int]]] = {
-        svid: _best_windows(in_order.get(svid, []), hit_map[svid], run_width, run_slots)
-        for svid in by_source
-    }
+    run_budget = max(8, int(max_claims * 0.6))
+    in_order, in_section = _claims_in_order(store)
 
-    def source_score(svid: int, items: list[tuple[float, dict]]) -> float:
-        # 渡すのは連続した区間なので、その区間が持つ当たりの量で比べる。
-        # 持ち分の幅が同じなので、出典の大きさで割る必要はない。
-        got = window_score(in_order.get(svid, []), hit_map[svid], run_width, run_slots)
-        base = got / math.sqrt(run_budget) + title_bonus(items)
+    # 取り出しの単位は「節」にする。参照記事は人物や用語ごとに節が立っており、
+    # 質問が「それぞれの〜」と尋ねるとき、答えは節そのものだから。
+    # 出典を単位にして幅の決まった窓を滑らせると、一行ずつ並んだ一覧表のような出典が
+    # （どの行も当たるので密に見えて）必ず勝ち、説明の書かれた節が入らない。
+    ALL_SECTIONS = "\x00"     # 出典まるごとを表す擬似的な節
+    by_group: dict[tuple[int, str], list[tuple[float, dict]]] = {}
+    for score, c in ranked:
+        if c["source_version_id"]:
+            sv = int(c["source_version_id"])
+            by_group.setdefault((sv, split_section(c["text"])[0]), []).append((score, c))
+            # 節だけを単位にすると、当たりの無い節に手が届かない。「時系列まとめ」の
+            # ように出典そのものが答えである場合は、節をまたいで取り出す必要がある。
+            by_group.setdefault((sv, ALL_SECTIONS), []).append((score, c))
+    # 見出しの無い出典では、節なしの群と出典まるごとの群が同じものになる。
+    # 両方を候補にすると同じ材料で2枠を使うので、出典まるごとのほうに寄せる。
+    for sv, _sec in [k for k in by_group if k[1] == ""]:
+        if (sv, ALL_SECTIONS) in by_group:
+            by_group.pop((sv, ""), None)
+
+    # 1つの節から渡す上限。節をいくつ拾うかと合わせて持ち分を決める
+    per_group = max(4, run_budget // 7)
+
+    entity_names = {textutil.flatten(n) for names in alias_map.values() for n in names}
+
+    def heading_bonus(section: str) -> float:
+        """節見出しがその作品の登録済みの対象（人物・用語）そのものなら押す。
+
+        「人魚の魔女 / オクタヴィア（Oktavia）」のような節は、質問が尋ねている当の対象
+        についての説明そのもの。一方「劇場版〈…〉あらすじ」のような節は、同じ語を含んでいても
+        対象そのものではない。エンティティは人が選んで登録したものなので、
+        「この作品が実際に持っている対象か」の目印になる。
+        """
+        if not section or section == ALL_SECTIONS:
+            return 0.0
+        head = re.sub(r"[（(\[【].*", "", section.split(" / ")[0])
+        named = textutil.flatten(head) in entity_names
+        return (6.0 if named else 0.0) + min(
+            sum(weights.get(t, 0) * 2 for t in terms if t and t in section), 4.0)
+
+    def group_value(key: tuple[int, str], items: list[tuple[float, dict]]) -> float:
+        """その群から実際に渡す分（per_group 件）が、どれだけの内容を持つか。
+
+        群の全体を合計すると、見出しが1つしかない長い記事（187件で1節）が
+        件数だけで勝ってしまう。渡すのは per_group 件なので、その幅で比べる。
+
+        1件あたりの重みには文の長さを掛ける。当たりの数だけで比べると、一行ずつ並んだ
+        一覧表が必ず勝つ（どの行も語が当たるので密に見える）が、1件が伝える内容は
+        「名前: 性質」程度しかない。説明の書かれた節は当たる行が少なくても1件が伝える量が多い。
+        """
+        ids_of = in_order.get(key[0], []) if key[1] == ALL_SECTIONS else in_section.get(key, [])
+        # 節を選ぶときは、見出しだけの一致を割り引かない。
+        # 「人魚の魔女 / オクタヴィア: <説明>」の説明文は魔女の名前を繰り返さないが、
+        # その節は問われている当の対象についての記述そのものだから。
+        # （割り引きは、名言集のように見出しが単なる帰属ラベルである場合のために、
+        #   主張を1件ずつ並べる先頭の枠のほうで効かせる）
+        weighted = {
+            c["id"]: topical.get(c["id"], sc) * min(len(split_section(c["text"])[1]), 120) / 60
+            for sc, c in items
+        }
+        if not ids_of:
+            return sum(weighted.values())
+        return window_score(ids_of, weighted, per_group, 1)
+
+    def group_score(key: tuple[int, str], items: list[tuple[float, dict]]) -> float:
+        base = group_value(key, items) + title_bonus(items) + heading_bonus(key[1])
         # 出典の優先順を効かせる。感想noteの節が公式・記事の節を押しのけないように
         return base * (0.5 + items[0][1].get("priority", 0) / 200)
 
     runs: list[dict] = []
     used_sources: list[int] = []
-    chosen = [
-        (svid, items)
-        for svid, items in sorted(by_source.items(), key=lambda kv: -source_score(kv[0], kv[1]))[:3]
-        if len(items) >= 3 or title_bonus(items) > 0
-    ]
-    for svid, _ in chosen:
-        ids = in_order.get(svid, [])
+    taken = 0
+    for key, items in sorted(by_group.items(), key=lambda kv: -group_score(kv[0], kv[1])):
+        if taken >= run_budget:
+            break
+        if len(items) < 2 and title_bonus(items) <= 0:
+            continue
+        ids = in_order.get(key[0], []) if key[1] == ALL_SECTIONS else in_section.get(key, [])
+        if not ids:
+            continue
+        width = min(per_group, run_budget - taken)
+        hits = {c["id"]: score for score, c in items}
         picked: list[int] = []
-        for start, end in windows[svid]:
+        for start, end in _best_windows(ids, hits, width, 1):
             picked.extend(ids[start:end])
+        if not picked:
+            continue
         runs.extend(_fetch_claims(store, picked))
-        used_sources.append(svid)
+        taken += len(picked)
+        if key[0] not in used_sources:
+            used_sources.append(key[0])
 
     # 並び: まず当たりの強い主張（点で答える質問のため）、次に節を原文の並び順で
     # （順序が答えになる質問のため）、最後に残り。

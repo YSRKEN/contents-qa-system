@@ -177,3 +177,32 @@ def test_boilerplate_is_not_repeated_in_the_material(store):
                         source_version_id=v.version_id, entities=["かぐや"])
     got = [c["text"] for c in answer.retrieve(store, "かぐやの願いは？", max_claims=20)["claims"]]
     assert sum(1 for t in got if "代償として魔法少女" in t) == 1
+
+
+def test_a_section_about_the_asked_thing_is_returned_in_depth(store):
+    """節の題が問われている当の対象なら、その節から厚く取ること。
+
+    節の中の説明文は対象の名前を繰り返さない（「上半身は鎧をまとった騎士で……」）。
+    見出しだけの一致を割り引いたまま節を選ぶと、この節が丸ごと沈む。
+    """
+    store.ensure_entity("人魚の魔女", kind="term", aliases=["オクタヴィア"])
+    sid = store.add_source(url="https://ja.wikipedia.org/wiki/x", kind="wiki_index", title="キャラクター一覧")
+    v = store.add_version(sid, text="一覧", title="キャラクター一覧")
+    detail = [
+        "美樹さやかが魔女化した存在である。",
+        "コンサートホールのような結界に住んでいる。",
+        "上半身は三つの目を持つ鎧兜をまとった巨体の騎士である。",
+        "下半身は魚の姿をしている。",
+        "多数の車輪を放つ攻撃を行う。",
+    ]
+    want = [store.add_claim(text=f"人魚の魔女 / オクタヴィア: {t}", source_version_id=v.version_id,
+                            offset=i, entities=["人魚の魔女"]) for i, t in enumerate(detail)]
+    # 一行ずつ並んだ一覧表。どの行も語が当たるので、件数だけで比べると必ず勝つ
+    table = store.add_source(url="https://example.com/list", kind="fan_chronicle", title="魔女一覧")
+    tv = store.add_version(table, text="一覧", title="魔女一覧")
+    for i in range(40):
+        store.add_claim(text=f"魔女一覧: 名前 第{i}の魔女 / 性質 不明 / 元の姿 不明",
+                        source_version_id=tv.version_id, offset=i)
+
+    got = {c["id"] for c in answer.retrieve(store, "人魚の魔女について教えて", max_claims=30)["claims"]}
+    assert len(got & set(want)) >= 4
