@@ -52,3 +52,13 @@ def test_split_sentences_does_not_break_inside_brackets():
 def test_join_wrapped_lines_reconnects_comma_endings():
     joined = textutil.join_wrapped_lines("17歳の女子高生・彩葉は、\n多忙な日々を送っていた。\nかぐや")
     assert joined == "17歳の女子高生・彩葉は、多忙な日々を送っていた。\nかぐや"
+
+
+def test_join_wrapped_lines_keeps_bullets_separate():
+    joined = textutil.join_wrapped_lines("以上を踏まえると、\n・7/11〜9/22の出来事\n・9/12まで一緒にいた")
+    assert joined.split("\n") == ["以上を踏まえると、", "・7/11〜9/22の出来事", "・9/12まで一緒にいた"]
+
+
+def test_terminator_inside_a_sentence_does_not_split():
+    got = textutil.split_sentences("プロゲーマーとFPS？でガチンコ対決した。次の文はこれ。")
+    assert got == ["プロゲーマーとFPS？でガチンコ対決した。", "次の文はこれ。"]

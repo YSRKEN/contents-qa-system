@@ -109,6 +109,9 @@ def content_hash(text: str) -> str:
 # 括弧の内側にある。！？では文を切らない。
 _BRACKETS = {"「": "」", "『": "』", "（": "）", "(": ")", "〈": "〉", "《": "》", "【": "】", "“": "”"}
 _TERMINATORS = "。！？!?"
+# 終止符の直後にこれらが続く場合、そこは文の切れ目ではない
+# （例:「プロゲーマーとFPS？でガチンコ対決し」）
+_CONTINUATIONS = "でとがをにはのもやへ」』）)、，"
 
 
 def join_wrapped_lines(text: str) -> str:
@@ -120,8 +123,11 @@ def join_wrapped_lines(text: str) -> str:
     lines = text.split("\n")
     out: list[str] = []
     for ln in lines:
-        if out and out[-1].endswith(("、", "，", "，")):
-            out[-1] += ln.strip()
+        stripped = ln.strip()
+        # 箇条書きや見出しで始まる行は、前の行の続きではない
+        starts_block = bool(re.match(r"^[・･\-*+•●○◆▶▼<＜【〔#]", stripped))
+        if out and out[-1].endswith(("、", "，")) and stripped and not starts_block:
+            out[-1] += stripped
         else:
             out.append(ln)
     return "\n".join(out)
@@ -140,13 +146,16 @@ def split_sentences(text: str, *, min_len: int = 6) -> list[str]:
             continue
         buf: list[str] = []
         stack: list[str] = []
-        for ch in line:
+        for i, ch in enumerate(line):
             buf.append(ch)
             if ch in _BRACKETS:
                 stack.append(_BRACKETS[ch])
             elif stack and ch == stack[-1]:
                 stack.pop()
             elif ch in _TERMINATORS and not stack:
+                nxt = line[i + 1] if i + 1 < len(line) else ""
+                if nxt in _CONTINUATIONS:
+                    continue
                 s = "".join(buf).strip()
                 if len(s) >= min_len:
                     out.append(s)

@@ -17,6 +17,7 @@ _NOISE = re.compile(
     r"お問い合わせ|サイトマップ|ページの先頭|メニュー|検索|シェア|フォロー|"
     r"フリー百科事典|ウィキペディア|この記事には|ノートページ|出典検索|"
     r"出典がまったく示されていない|独自研究|ファンサイト的な内容|改善やノートページ|"
+    r"ご協力ください|ノートを参照|過剰な記述|網羅するものではありません|出典を追加して|"
     r"^\s*\d+\s*$|^[\s|/･・>»-]+$)",
     re.I,
 )
@@ -41,30 +42,93 @@ def is_fragment(sentence: str) -> bool:
     return not sentence.endswith(_SENTENCE_END)
 
 
+# 節見出し。<卒業ライブ> 【おそらく逆転の要因】 ## 見出し のような形。
+_HEADING_WRAPPED = re.compile(r"^[<＜【〔［\[]\s*(.+?)\s*[>＞】〕］\]]$")
+_HEADING_MD = re.compile(r"^#{1,6}\s+(.+)$")
+_LEADING_SYMBOLS = re.compile(r"^[^\w\u3040-\u30ff\u4e00-\u9fff]+")
+# 見出しの位置に現れるが見出しではない語（Wikiの編集リンクなど）
+_NOT_A_HEADING = re.compile(r"^(編集|ソースを編集|続きを読む|目次|関連記事|広告|スポンサーリンク|PR)$")
+# 行頭の箇条書き記号
+_BULLET = re.compile(r"^[・･\-*+•●○◆▶▼]\s*(.+)$")
+
+
+def heading_of(line: str, *, max_len: int = 26) -> str | None:
+    """その行が節見出しなら見出し文字列を返す。
+
+    見出しは、そこから先の文が「何についての記述か」を決める。
+    文だけを取り出すと「メールの日付から8月16日だと分かります」のように
+    主語を失うので、見出しを覚えておいて主張に引き継ぐ。
+    """
+    m = _HEADING_WRAPPED.match(line) or _HEADING_MD.match(line)
+    if m:
+        core = m.group(1).strip()
+        return None if _NOT_A_HEADING.match(core) else core
+    if len(line) > max_len or line.endswith(_SENTENCE_END) or re.search(r"[。、．，]", line):
+        return None
+    core = _LEADING_SYMBOLS.sub("", line).strip()
+    if core and len(core) <= max_len and _HAS_JA.search(core) and not _NOT_A_HEADING.match(core):
+        return core
+    return None
+
+
 def candidate_sentences(
     text: str,
     *,
     entities: Sequence[str] = (),
     min_len: int = 10,
     max_len: int = 400,
+    track_sections: bool = True,
 ) -> list[dict]:
     """主張候補の文を返す。entities を渡すと、いずれかに触れる文だけに絞る。
 
-    返り値の各要素は {"text": 文, "entities": 言及したエンティティ, "offset": 本文中の位置}。
-    offset は出典参照（原文のどこから来たか）に使う。
+    返り値の各要素は
+    {"text": 文, "section": 直前の節見出し, "entities": 言及したエンティティ, "offset": 本文中の位置}。
     """
     out: list[dict] = []
     cursor = 0
-    for s in textutil.split_sentences(text, min_len=min_len):
-        idx = text.find(s, cursor)
-        if idx >= 0:
-            cursor = idx + len(s)
-        if len(s) > max_len or is_noise(s) or is_fragment(s):
+    section: str | None = None
+    chain: list[str] = []
+    after_heading = False
+    for line in textutil.join_wrapped_lines(text).split("\n"):
+        line = line.strip()
+        if not line:
             continue
-        hit = [e for e in entities if e and e in s]
-        if entities and not hit:
-            continue
-        out.append({"text": s, "entities": hit, "offset": idx if idx >= 0 else None})
+        bullet = _BULLET.match(line)
+        if track_sections and not bullet:
+            head = heading_of(line)
+            if head is not None:
+                if is_noise(head):
+                    continue
+                # 見出しが続けて現れる場合は入れ子とみなして繋ぐ
+                chain = (chain + [head])[-2:] if after_heading else [head]
+                section = " / ".join(chain)
+                after_heading = True
+                continue
+        after_heading = False
+
+        if bullet:
+            # 箇条書きは1項目で1つの主張。句点で終わらなくても落とさない
+            pieces = [(bullet.group(1).strip(), True)]
+        else:
+            pieces = [(s, False) for s in textutil.split_sentences(line, min_len=min_len)]
+
+        for s, is_item in pieces:
+            idx = text.find(s, cursor)
+            if idx >= 0:
+                cursor = idx + len(s)
+            if len(s) < min_len or len(s) > max_len or is_noise(s):
+                continue
+            if not is_item and is_fragment(s):
+                continue
+            if is_item and (not _HAS_JA.search(s) or _IMAGE_LINE.match(s)):
+                continue
+            hit = [e for e in entities if e and e in s]
+            if entities and not hit:
+                continue
+            out.append({
+                "text": s, "section": section, "entities": hit,
+                "offset": idx if idx >= 0 else None,
+            })
     return out
 
 

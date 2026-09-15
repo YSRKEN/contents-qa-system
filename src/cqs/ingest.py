@@ -227,6 +227,11 @@ def propose_claims(
         # entities で絞らなかった場合、文中の表記を改めて拾って正規名に直す
         hits = c["entities"] or [k for k in surfaces if k in c["text"]]
         c["entities"] = sorted({surfaces[k] for k in hits})
+        # 節見出しがあれば、それも対象エンティティの手がかりにする
+        if c.get("section"):
+            c["entities"] = sorted(
+                set(c["entities"]) | {surfaces[k] for k in surfaces if k in c["section"]}
+            )
     return cands[:limit]
 
 
@@ -257,12 +262,14 @@ def register_proposed(
     for c in cands:
         if require_entity and not c["entities"]:
             continue
-        if c["text"] in existing:
+        # 見出しを本文に冠して、その文が何についての記述かを残す
+        text = f"{c['section']}: {c['text']}" if c.get("section") else c["text"]
+        if text in existing:
             continue
-        existing.add(c["text"])
+        existing.add(text)
         ids.append(
             store.add_claim(
-                text=c["text"],
+                text=text,
                 source_version_id=source_version_id,
                 entities=c["entities"],
                 locator=c["text"],
