@@ -31,6 +31,14 @@ SOURCE_KINDS: dict[str, dict] = {
         "refetch": "once",
         "verification": "article",
     },
+    "fan_chronicle": {
+        # 感想ではなく「本編に何が描かれていたか」の記述。作中の日付や配置の読み取り、
+        # 時系列の整理など、原理的には本編を見れば検証できる内容を置く。
+        "label": "ファンによる本編の記述・時系列整理",
+        "priority": 40,
+        "refetch": "once",
+        "verification": "secondhand",
+    },
     "fan_note": {
         "label": "感想note・ファン考察",
         "priority": 30,
@@ -38,10 +46,13 @@ SOURCE_KINDS: dict[str, dict] = {
         "verification": "fan_interpretation",
     },
     "wiki_index": {
-        "label": "Wiki（探索用インデックス）",
-        "priority": 10,
+        # 第一の役割は「出典欄から原資料を辿るための索引」。ただし出典が書籍しかない記述は
+        # 辿る先がネット上に無いので、Wikiを根拠から完全に外すとその情報が落ちる。
+        # そのため伝聞として扱い、どの脚注に基づくかを主張のメモに残す。
+        "label": "Wiki（百科事典・探索用インデックス）",
+        "priority": 45,
         "refetch": "periodic",
-        "verification": "unverified",
+        "verification": "secondhand",
     },
     "ai_report": {
         "label": "他AIの調査報告",
@@ -61,6 +72,7 @@ SOURCE_KINDS: dict[str, dict] = {
 VERIFICATIONS: dict[str, str] = {
     "official": "公式確認",
     "article": "記事のみ",
+    "secondhand": "伝聞",
     "fan_interpretation": "ファン解釈",
     "needs_recheck": "要再確認",
     "unverified": "未検証",
@@ -70,6 +82,10 @@ VERIFICATIONS: dict[str, str] = {
 VERIFICATION_HANDLING: dict[str, str] = {
     "official": "作品内の事実として断定してよい。",
     "article": "出典を添えて提示する。断定はしない。",
+    "secondhand": (
+        "作中の出来事として述べてよい。ただし公式が述べたことではなく、"
+        "本編を見た第三者の読み取りなので、出典を示し、他の出典と一致するかどうかを断る。"
+    ),
     "fan_interpretation": "『そう解釈する感想がある』という形でのみ述べる。作品内の事実の根拠にはしない。",
     "needs_recheck": "出典の本文が変化している。再確認するまで根拠に使わない。",
     "unverified": "未照合。根拠に使わない。",

@@ -213,6 +213,48 @@ def cmd_sources(args: argparse.Namespace) -> None:
         print(f"{len(rows)}件")
 
 
+def cmd_source_kind(args: argparse.Namespace) -> None:
+    with _store(args) as st:
+        st.set_source_kind(args.source_id, args.kind)
+        _out(args, {"ok": True}, f"出典 {args.source_id} の種別を {kind_label(args.kind)} にしました")
+
+
+def cmd_wiki(args: argparse.Namespace) -> None:
+    from . import wiki
+
+    with _store(args) as st:
+        if args.wiki_command == "refs":
+            raw = st.get_raw_html(args.source_version_id)
+            if not raw:
+                raise SystemExit("生HTMLが保存されていません")
+            pending = set(wiki.pending_reference_urls(st, args.source_version_id))
+            urls = wiki.reference_urls(raw)
+            if args.json:
+                _out(args, {"urls": urls, "pending": sorted(pending)})
+                return
+            for u in urls:
+                print(("  " if u in pending else "○ ") + u)
+            print(f"{len(urls)}件（うち未取得 {len(pending)}件）")
+        elif args.wiki_command == "fetch-refs":
+            rows = wiki.fetch_references(st, args.source_version_id, limit=args.limit)
+            if args.json:
+                _out(args, rows)
+                return
+            for r in rows:
+                if "error" in r:
+                    print(f"× {r['url']}: {r['error']}")
+                else:
+                    print(f"○ [{r['kind_label']}] {r['text_length']:>6}字 {r['url']}")
+        elif args.wiki_command == "annotate":
+            r = wiki.annotate_claims(st, args.source_version_id)
+            _out(
+                args, r,
+                f"{r.get('annotated', 0)} 件の主張に脚注を書き添えました"
+                f"（脚注 {r.get('citations', 0)} 件 / URL付き参照 {r.get('markers_with_url', 0)}"
+                f" / 書籍のみ {r.get('markers_book_only', 0)}）",
+            )
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     with _store(args) as st:
         rows = st.search_sources(args.query, kind=args.kind, limit=args.limit)
@@ -418,6 +460,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("sources", help="出典一覧")
     sp.add_argument("--kind", choices=sorted(SOURCE_KINDS))
     sp.set_defaults(func=cmd_sources)
+
+    wp = sub.add_parser("wiki", help="Wikiの脚注を扱う（原資料を辿る／主張に脚注を添える）")
+    wsub = wp.add_subparsers(dest="wiki_command", required=True)
+    w1 = wsub.add_parser("refs", help="脚注の外部URLを一覧する（○=取り込み済み）")
+    w1.add_argument("source_version_id", type=int)
+    w1.set_defaults(func=cmd_wiki)
+    w2 = wsub.add_parser("fetch-refs", help="未取得の脚注リンク先を原資料として取り込む")
+    w2.add_argument("source_version_id", type=int)
+    w2.add_argument("--limit", type=int, default=20)
+    w2.set_defaults(func=cmd_wiki)
+    w3 = wsub.add_parser("annotate", help="Wiki由来の主張に、根拠となる脚注を書き添える")
+    w3.add_argument("source_version_id", type=int)
+    w3.set_defaults(func=cmd_wiki)
+
+    sp = sub.add_parser("source-kind", help="取り込み済みの出典の種別を変える")
+    sp.add_argument("source_id", type=int)
+    sp.add_argument("kind", choices=sorted(SOURCE_KINDS))
+    sp.set_defaults(func=cmd_source_kind)
 
     sp = sub.add_parser("search", help="原文層の全文検索")
     sp.add_argument("query")

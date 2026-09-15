@@ -29,9 +29,10 @@ from .constants import (
 _VERIF_RANK = {
     "official": 0,
     "article": 1,
-    "fan_interpretation": 2,
-    "needs_recheck": 3,
-    "unverified": 4,
+    "secondhand": 2,
+    "fan_interpretation": 3,
+    "needs_recheck": 4,
+    "unverified": 5,
 }
 
 
@@ -151,8 +152,10 @@ class WorkStore:
             ("wikiwiki.jp", "wiki_index"),
             ("seesaawiki.jp", "wiki_index"),
             ("fandom.com", "wiki_index"),
-            ("x.com", "official_sns"),
-            ("twitter.com", "official_sns"),
+            # ホスト名では公式かどうか分からない。公式アカウントは作品ごとのルールで
+            # アカウント名まで含めて指定する（例: "x.com/Cho_KaguyaHime" → official_sns）。
+            ("x.com", "fan_note"),
+            ("twitter.com", "fan_note"),
         ):
             if pattern in u:
                 return kind
@@ -180,6 +183,23 @@ class WorkStore:
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def set_source_kind(self, source_id: int, kind: str) -> None:
+        """出典の種別を変える。分類を誤って取り込んだときに使う。
+
+        すでに登録済みの主張の確認状態は変えない（機械的に上書きすると人手の判断を潰すため）。
+        必要なら set_verification で個別に直す。
+        """
+        if kind not in SOURCE_KINDS:
+            raise StoreError(f"未知の出典種別: {kind}")
+        if not self.get_source(source_id):
+            raise StoreError(f"出典が見つかりません: {source_id}")
+        self.conn.execute(
+            "UPDATE sources SET kind = ?, refetch = ? WHERE id = ?",
+            (kind, default_refetch(kind), source_id),
+        )
+        self.conn.commit()
+        self.log("set_source_kind", {"source_id": source_id, "kind": kind})
 
     def get_source(self, source_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()

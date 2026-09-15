@@ -111,3 +111,41 @@ def test_two_character_name_is_searchable(store):
     # 3文字以上の語と混ぜても両方が効く
     assert store.search_claims(query="彩葉 高校生")
     assert store.search_claims(query="彩葉 月から") == []
+
+
+def test_secondhand_sits_between_article_and_fan_interpretation(store):
+    """本編の読み取り（伝聞）は、感想より上・記事より下に並ぶこと。"""
+    _, official = _src(store)
+    _, art = _src(store, kind="article", url="https://news.example/1")
+    _, chron = _src(store, kind="fan_chronicle", url="https://blog.example/timeline")
+    _, note = _src(store, kind="fan_note", url="https://note.com/x")
+    for v in (note, chron, art, official):
+        store.add_claim(text=f"彩葉の話 {v.version_id}", source_version_id=v.version_id, entities=["彩葉"])
+    assert [r["verification"] for r in store.search_claims(entity="彩葉")] == [
+        "official", "article", "secondhand", "fan_interpretation",
+    ]
+
+
+def test_set_source_kind_reclassifies_without_touching_claims(store):
+    sid, v = _src(store, kind="fan_note", url="https://blog.example/t")
+    cid = store.add_claim(text="作中の日付の読み取り", source_version_id=v.version_id)
+    assert store.get_claim(cid)["verification"] == "fan_interpretation"
+    store.set_source_kind(sid, "fan_chronicle")
+    assert store.get_source(sid)["kind"] == "fan_chronicle"
+    # 既存の主張の確認状態は自動では変えない
+    assert store.get_claim(cid)["verification"] == "fan_interpretation"
+
+
+def test_x_account_is_not_official_by_host_alone(store):
+    """ホスト名だけでは公式か判別できないので、既定ではファン扱いにする。"""
+    assert store.guess_kind("https://x.com/some_fan") == "fan_note"
+    store.set_kind_rule("x.com/Cho_KaguyaHime", "official_sns")
+    assert store.guess_kind("https://x.com/Cho_KaguyaHime/status/1") == "official_sns"
+    assert store.guess_kind("https://x.com/some_fan/status/1") == "fan_note"
+
+
+def test_wiki_grounds_claims_as_secondhand(store):
+    """Wikiは索引であると同時に、出典が書籍しかない記述の受け皿にもなる（伝聞扱い）。"""
+    _, v = _src(store, kind="wiki_index", url="https://ja.wikipedia.org/wiki/x")
+    cid = store.add_claim(text="小説版の著者は誰それである。", source_version_id=v.version_id)
+    assert store.get_claim(cid)["verification"] == "secondhand"

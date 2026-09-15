@@ -7,7 +7,7 @@ LLMを呼ぶかどうかは任意。APIキーが無い環境では、検索し�
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Sequence
 
 from .constants import VERIFICATION_HANDLING, verification_label
 from .store import WorkStore
@@ -44,42 +44,69 @@ def mentioned_entities(store: WorkStore, question: str) -> list[str]:
     return hits
 
 
+_VERIF_RANK = {"official": 0, "article": 1, "secondhand": 2, "fan_interpretation": 3,
+               "needs_recheck": 4, "unverified": 5}
+
+
 def retrieve(
     store: WorkStore,
     question: str,
     *,
     max_claims: int = 40,
     max_sources: int = 5,
+    extra_terms: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """質問に対する材料を集める。"""
-    ents = mentioned_entities(store, question)
+    """質問に対する材料を集める。
 
-    claims: list[dict] = []
-    seen: set[int] = set()
+    エンティティ一致だけで埋めると、人物名を含まない記述（日付や設定の文など）が
+    まったく出てこない。エンティティ一致と語一致を足し合わせた点数で並べる。
+    extra_terms には、質問の言い換えや出来事名など、外から足したい検索語を渡す。
+    """
+    ents = mentioned_entities(store, question)
+    terms = [t for t in extra_terms if t.strip()]
+
+    scored: dict[int, tuple[int, dict]] = {}
+
+    def bump(c: dict, points: int) -> None:
+        prev = scored.get(c["id"])
+        scored[c["id"]] = (prev[0] + points if prev else points, c)
+
     for name in ents:
-        for c in store.search_claims(entity=name, limit=max_claims):
-            if c["id"] not in seen:
-                seen.add(c["id"])
-                claims.append(c)
-    for c in store.search_claims(query=question, limit=max_claims):
-        if c["id"] not in seen:
-            seen.add(c["id"])
-            claims.append(c)
+        for c in store.search_claims(entity=name, limit=max_claims * 2):
+            bump(c, 4)
+    for q in [question, *terms]:
+        for c in store.search_claims(query=q, limit=max_claims):
+            bump(c, 6)
+
+    ranked = sorted(
+        scored.values(),
+        key=lambda x: (-x[0], _VERIF_RANK.get(x[1]["verification"], 9), -x[1]["priority"], x[1]["id"]),
+    )
+    claims = [c for _, c in ranked][:max_claims]
 
     related = {n: store.related_entities(n) for n in ents}
-    sources = store.search_sources(question, limit=max_sources)
+    sources: list[dict] = []
+    seen_src: set[int] = set()
+    for q in [question, *terms]:
+        for s in store.search_sources(q, limit=max_sources):
+            if s["source_version_id"] not in seen_src:
+                seen_src.add(s["source_version_id"])
+                sources.append(s)
     return {
         "question": question,
         "entities": ents,
+        "terms": terms,
         "related_entities": related,
-        "claims": claims[:max_claims],
-        "sources": sources,
+        "claims": claims,
+        "sources": sources[:max_sources],
     }
 
 
 def format_context(ctx: dict[str, Any]) -> str:
     """LLMに渡す材料を、確認状態と出典が見える形で整形する。"""
     lines: list[str] = []
+    if ctx.get("terms"):
+        lines.append(f"# 使った検索語: {', '.join(ctx['terms'])}")
     if ctx["entities"]:
         lines.append(f"# 質問に現れた登録済みエンティティ: {', '.join(ctx['entities'])}")
         for name, rel in ctx["related_entities"].items():
@@ -126,9 +153,10 @@ def answer(
     model: str | None = None,
     max_claims: int = 40,
     use_llm: bool = True,
+    extra_terms: Sequence[str] = (),
 ) -> dict[str, Any]:
     """質問に答える。APIキーが無い/use_llm=False の場合は材料とプロンプトだけを返す。"""
-    ctx = retrieve(store, question, max_claims=max_claims)
+    ctx = retrieve(store, question, max_claims=max_claims, extra_terms=extra_terms)
     prompt = build_prompt(ctx)
     result: dict[str, Any] = {"context": ctx, "prompt": prompt, "answer": None, "model": None}
 

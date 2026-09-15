@@ -26,3 +26,13 @@ def test_propose_without_entity_requirement(store):
     assert ingest.propose_claims(store, r["source_version_id"]) == []
     got = ingest.propose_claims(store, r["source_version_id"], require_entity=False)
     assert [c["text"] for c in got] == ["9月18日より復活上映が決定しました。"]
+
+
+def test_register_proposed_does_not_duplicate_on_rerun(store):
+    store.ensure_entity("彩葉")
+    r = ingest.ingest_text(store, "彩葉は17歳である。作中は2030年の夏である。", kind="fan_chronicle", title="時系列")
+    first = ingest.register_proposed(store, r["source_version_id"])
+    assert len(first) == 1                       # 人物名のある文だけ
+    second = ingest.register_proposed(store, r["source_version_id"], require_entity=False)
+    assert len(second) == 1                      # 追加ぶんだけ。既存は重複しない
+    assert store.stats()["claims_active"] == 2

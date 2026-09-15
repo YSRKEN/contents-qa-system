@@ -246,10 +246,20 @@ def register_proposed(
     cands = propose_claims(
         store, source_version_id, entities=entities, limit=limit, require_entity=require_entity
     )
+    # 同じ版から二度登録しても重複しないようにする（条件を変えて取り直す運用があるため）
+    existing = {
+        r["text"]
+        for r in store.conn.execute(
+            "SELECT text FROM claims WHERE source_version_id = ?", (source_version_id,)
+        )
+    }
     ids: list[int] = []
     for c in cands:
         if require_entity and not c["entities"]:
             continue
+        if c["text"] in existing:
+            continue
+        existing.add(c["text"])
         ids.append(
             store.add_claim(
                 text=c["text"],

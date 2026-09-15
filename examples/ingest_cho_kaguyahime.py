@@ -42,6 +42,20 @@ KIND_RULES = [
     ("twinengine.jp", "article"),
     ("denfaminicogamer.jp", "article"),
     ("natalie.mu", "article"),
+    ("kadokawa.co.jp", "official_site"),      # 版元の商品ページ（小説・漫画・公式ガイドブック）
+    ("realsound.jp", "article"),
+    ("moguravr.com", "article"),
+    ("animeanime.jp", "article"),
+    ("ciatr.jp", "article"),
+    ("purunlife.com", "fan_note"),
+    ("midnight-sweets.com", "fan_note"),
+    ("tyerukun.com", "fan_note"),
+    # 本編の読み取り（日付・地理・命名）を扱うので「解釈」ではなく「伝聞」側に置く
+    ("yuno-phar.hatenablog.com", "fan_chronicle"),
+    # 公式アカウントはホスト名ではなくアカウント名まで指定する
+    ("x.com/Cho_KaguyaHime", "official_sns"),
+    ("x.com/studiochromato", "official_sns"),
+    ("x.com/takacho_01", "fan_chronicle"),
 ]
 
 URLS = [
@@ -70,6 +84,27 @@ URLS = [
     "https://x.com/Cho_KaguyaHime/status/2063123720097468464",
     "https://x.com/Cho_KaguyaHime/status/2019380735870697734",
     "https://x.com/Cho_KaguyaHime/status/2033831030550106371",
+    # 版元の商品ページ（小説版・漫画版・公式ガイドブック）
+    "https://www.kadokawa.co.jp/product/322509000503/",
+    "https://www.kadokawa.co.jp/product/322509000193/",
+    "https://www.kadokawa.co.jp/product/322510000048/",
+    # 本編に踏み込んだ記事・考察
+    "https://ciatr.jp/topics/335940",
+    "https://realsound.jp/movie/2026/02/post-2297135.html",
+    "https://realsound.jp/movie/2026/01/post-2269728_2.html",
+    "https://s.animeanime.jp/article/2026/02/21/96219.html",
+    "https://www.moguravr.com/vrchat-kaguya-hime-live-report/",
+    # 本編の読み取り（時系列・地理・命名）
+    "https://yuno-phar.hatenablog.com/entry/2026/05/19/203241",
+    "https://yuno-phar.hatenablog.com/entry/2026/04/19/140307",
+    "https://yuno-phar.hatenablog.com/entry/2026/05/07/095608",
+    "https://yuno-phar.hatenablog.com/entry/2026/05/11/133355",
+    "https://x.com/takacho_01/status/2029166435440967784",
+    # 考察note（解釈として扱う）
+    "https://note.com/tubu78/n/n60b7c170496c",
+    "http://purunlife.com/cho-kaguya-hime-spoiler-explanation/",
+    "https://midnight-sweets.com/entry/cho-kaguyahime-explanation",
+    "https://tyerukun.com/tyokaguyahime-last-kousatu/",
     # 感想note（ファン解釈として扱う）
     "https://note.com/zenjituloku/n/n705f05631a44",
     "https://note.com/kohatazuke/n/ne448c35ab2f9",
@@ -98,6 +133,19 @@ ENTITIES: list[tuple[str, str, list[str]]] = [
     ("スタジオコロリド", "organization", []),
     ("スタジオクロマト", "organization", []),
     ("超かぐや姫！", "work", ["超かぐや姫", "超かぐや姫!", "CosmicPrincessKaguya"]),
+    ("酒寄朝久", "character", ["朝久"]),
+    ("酒寄紅葉", "character", ["紅葉"]),
+    ("月人", "term", ["つきじん"]),
+    ("KASSEN", "term", ["神戦"]),
+    ("ヤチヨカップ", "term", ["YachiyoCUP"]),
+    ("スマートコンタクト", "term", ["スマコン"]),
+    ("ふじゅ～", "term", ["ふじゅ〜Pay", "ふじゅ～Pay"]),
+    ("もと光る竹", "term", []),
+    ("立川市", "place", []),
+    ("夏生さえり", "person", []),
+    ("コーニッシュ", "person", []),
+    ("桐山なると", "person", []),
+    ("米田タロウ", "person", []),
 ]
 
 # 公式サイトの登場人物欄: [画像: 名前] → 英字表記 → CV → PROFILE → プロフィール本文
@@ -202,7 +250,7 @@ def main() -> int:
                     continue
                 if s["url"] == URLS[0]:
                     official_top = int(v["id"])
-                elif s["kind"] in ("interview", "article", "fan_note", "official_sns"):
+                elif s["kind"] in ("interview", "article", "fan_note", "fan_chronicle", "official_sns"):
                     secondary.append((int(v["id"]), s["kind"]))
         else:
             for url in URLS:
@@ -214,7 +262,7 @@ def main() -> int:
                 print(f"  ○ [{r['kind_label']}] {r['text_length']:>6}字 v{r['version_no']} {url}")
                 if url == URLS[0]:
                     official_top = r["source_version_id"]
-                elif r["kind"] in ("interview", "article", "fan_note", "official_sns"):
+                elif r["kind"] in ("interview", "article", "fan_note", "fan_chronicle", "official_sns"):
                     secondary.append((r["source_version_id"], r["kind"]))
 
         if official_top is None:
@@ -234,7 +282,9 @@ def main() -> int:
                     # 公式SNSの告知は人物名が出ないことが多いので、エンティティ必須を外す
                     total += len(
                         ingest.register_proposed(
-                            store, svid, limit=200, require_entity=(kind != "official_sns")
+                            # 公式SNSの告知と時系列の記述は人物名が出ないことが多い
+                            store, svid, limit=250,
+                            require_entity=kind not in ("official_sns", "fan_chronicle"),
                         )
                     )
                 except StoreError as e:

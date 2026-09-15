@@ -20,3 +20,18 @@ def test_answer_without_api_key_returns_prompt_only(store, monkeypatch):
     r = answer.answer(store, "何か質問")
     assert r["answer"] is None and "ANTHROPIC_API_KEY" in r["reason"]
     assert r["prompt"]["user"].endswith("何か質問")
+
+
+def test_retrieve_finds_claims_without_entities_via_terms(store):
+    """人物名を含まない記述（日付など）も、検索語を足せば拾えること。"""
+    sid = store.add_source(url="https://blog.example/t", kind="fan_chronicle", title="時系列")
+    v = store.add_version(sid, text="2030年の9/12はリアルでも満月です。")
+    store.ensure_entity("かぐや")
+    store.add_claim(text="2030年の9/12はリアルでも満月です。", source_version_id=v.version_id)
+    store.add_claim(text="かぐや: 月からやってきた少女。", source_version_id=v.version_id, entities=["かぐや"])
+
+    plain = answer.retrieve(store, "かぐやが月に帰った日付は？")
+    assert "2030年の9/12はリアルでも満月です。" not in [c["text"] for c in plain["claims"]]
+
+    with_terms = answer.retrieve(store, "かぐやが月に帰った日付は？", extra_terms=["満月"])
+    assert "2030年の9/12はリアルでも満月です。" in [c["text"] for c in with_terms["claims"]]
