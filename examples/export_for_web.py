@@ -11,7 +11,7 @@ for w in config.list_works():
         continue
     with config.open_work(w["file_slug"]) as st:
         claims = [{"id":c["id"],"t":c["text"],"v":c["verification"],"k":c["kind"] or "","u":c["url"] or "",
-                   "st":c["status"],"sv":c["source_version_id"],"e":c["entities"],"x":c["contradicts"],
+                   "st":c["status"],"sv":c["source_version_id"],"e":c["entities"],"x":c["contradicts"],"o":c["offset"],
                    "g":c["segment"] or ""}
                   for c in st.search_claims(status=None, limit=100000)]
         sources = []

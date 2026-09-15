@@ -549,6 +549,7 @@ class WorkStore:
         entities: Sequence[str] = (),
         locator: str | None = None,
         note: str | None = None,
+        offset: int | None = None,
         supersedes: int | None = None,
     ) -> int:
         text = text.strip()
@@ -574,8 +575,8 @@ class WorkStore:
         ts = now()
         cur = self.conn.execute(
             "INSERT INTO claims(text, source_version_id, verification, status, locator, note, "
-            "created_at, updated_at) VALUES (?,?,?,'active',?,?,?,?)",
-            (text, source_version_id, verification, locator, note, ts, ts),
+            "offset, created_at, updated_at) VALUES (?,?,?,'active',?,?,?,?,?)",
+            (text, source_version_id, verification, locator, note, offset, ts, ts),
         )
         cid = int(cur.lastrowid)
         for name in entities:
@@ -635,7 +636,7 @@ class WorkStore:
         self.conn.commit()
 
     _CLAIM_SELECT = (
-        "SELECT c.id, c.text, c.verification, c.status, c.locator, c.note, "
+        "SELECT c.id, c.text, c.verification, c.status, c.locator, c.note, c.offset, "
         "       c.created_at, c.updated_at, c.source_version_id, "
         "       v.version_no, v.fetched_at, s.url, s.kind, s.segment, s.title AS source_title "
         "FROM claims c "

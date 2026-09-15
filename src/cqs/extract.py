@@ -18,7 +18,7 @@ _NOISE = re.compile(
     r"フリー百科事典|ウィキペディア|この記事には|ノートページ|出典検索|"
     r"出典がまったく示されていない|独自研究|ファンサイト的な内容|改善やノートページ|"
     r"ご協力ください|ノートを参照|過剰な記述|網羅するものではありません|出典を追加して|"
-    r"^\s*\d+\s*$|^[\s|/･・>»-]+$)",
+    r"^\s*\d+\s*$|^[\s|/･・>»-]+$|^↑)",
     re.I,
 )
 
@@ -48,8 +48,21 @@ _HEADING_MD = re.compile(r"^#{1,6}\s+(.+)$")
 _LEADING_SYMBOLS = re.compile(r"^[^\w\u3040-\u30ff\u4e00-\u9fff]+")
 # 見出しの位置に現れるが見出しではない語（Wikiの編集リンクなど）
 _NOT_A_HEADING = re.compile(r"^(編集|ソースを編集|続きを読む|目次|関連記事|広告|スポンサーリンク|PR)$")
+# 見出しの末尾に付くWikiの編集リンク（「概要[編集]」）
+_EDIT_LINK = re.compile(r"\s*\[(編集|ソースを編集|edit)\]\s*$")
 # 行頭の箇条書き記号
 _BULLET = re.compile(r"^[・･\-*+•●○◆▶▼]\s*(.+)$")
+# 作品についての記述ではなく、書誌情報が並ぶ節（Wikiの末尾）
+_REFERENCE_SECTION = re.compile(r"(^|/ )\s*(出典|注釈|脚注|参考文献|外部リンク|関連項目)\s*$")
+
+
+def in_reference_section(section: str | None) -> bool:
+    return bool(section and _REFERENCE_SECTION.search(section))
+
+
+# HTMLで見出しと書かれていたことを示す印（textutil.html_to_text が付ける）。
+# 印がある行は、長さや句読点を見ずに見出しとして扱う。上限だけは置く。
+_MARKED_MAX_LEN = 90
 
 
 def heading_of(line: str, *, max_len: int = 26) -> str | None:
@@ -63,8 +76,10 @@ def heading_of(line: str, *, max_len: int = 26) -> str | None:
         return None
     m = _HEADING_WRAPPED.match(line) or _HEADING_MD.match(line)
     if m:
-        core = m.group(1).strip()
-        return None if _NOT_A_HEADING.match(core) else core
+        core = _EDIT_LINK.sub("", m.group(1)).strip()
+        if not core or len(core) > _MARKED_MAX_LEN or _NOT_A_HEADING.match(core):
+            return None
+        return core
     if len(line) > max_len or line.endswith(_SENTENCE_END) or re.search(r"[。、．，]", line):
         return None
     core = _LEADING_SYMBOLS.sub("", line).strip()
@@ -108,21 +123,27 @@ def candidate_sentences(
                 continue
         after_heading = False
 
+        # 節見出しの下にある文は、見出しが文脈を補うので短くても意味を持つ
+        # （「おめかしの魔女: 性質は「ご招待」。」）。見出しが無ければ短文は断片のことが多い。
+        floor = 6 if section else min_len
+
         if bullet:
             # 箇条書きは1項目で1つの主張。句点で終わらなくても落とさない
             pieces = [(bullet.group(1).strip(), True)]
         else:
-            pieces = [(s, False) for s in textutil.split_sentences(line, min_len=min_len)]
+            pieces = [(s, False) for s in textutil.split_sentences(line, min_len=floor)]
 
         for s, is_item in pieces:
             idx = text.find(s, cursor)
             if idx >= 0:
                 cursor = idx + len(s)
-            if len(s) < min_len or len(s) > max_len or is_noise(s):
+            if len(s) < floor or len(s) > max_len or is_noise(s):
                 continue
             if not is_item and is_fragment(s):
                 continue
             if is_item and (not _HAS_JA.search(s) or _IMAGE_LINE.match(s)):
+                continue
+            if in_reference_section(section):
                 continue
             flat = textutil.flatten(s)
             hit = [e for e in entities if e and (e in s or textutil.flatten(e) in flat)]

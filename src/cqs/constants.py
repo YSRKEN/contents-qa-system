@@ -116,6 +116,18 @@ LINK_TYPES = ("supersedes", "contradicts", "supports")
 # 知識層に入れてよい出典種別（ai_report は候補どまり）
 NON_CITABLE_KINDS = frozenset({"ai_report"})
 
+# 作品そのものを説明するために書かれた出典。ページ全体が本題なので、
+# 人物名が出ない文（用語・設定・各話・制作の経緯）も知識層に入れる。
+# それ以外（ニュース記事・感想note）はページの大半が案内や余談なので、
+# 登録済みのエンティティに触れる文だけを採る。
+REFERENCE_KINDS = frozenset({
+    "wiki_index", "official_site", "transcript", "image_transcript", "manual",
+})
+
+
+def is_reference_kind(kind: str | None) -> bool:
+    return (kind or "") in REFERENCE_KINDS
+
 
 def kind_label(kind: str) -> str:
     return SOURCE_KINDS.get(kind, {}).get("label", kind)

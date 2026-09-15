@@ -62,3 +62,16 @@ def test_join_wrapped_lines_keeps_bullets_separate():
 def test_terminator_inside_a_sentence_does_not_split():
     got = textutil.split_sentences("プロゲーマーとFPS？でガチンコ対決した。次の文はこれ。")
     assert got == ["プロゲーマーとFPS？でガチンコ対決した。", "次の文はこれ。"]
+
+
+def test_headings_are_marked_from_the_html():
+    """見出しかどうかを行の長さから推し量ると、長い見出しを本文と取り違える。"""
+    html = (
+        "<dl><dt>此岸の魔女</dt><dd>ゲーム版における暁美ほむらが魔女化した存在。</dd>"
+        "<dt><span class='anchor'></span>おめかしの魔女 / キャンデロロ（Candeloro）</dt>"
+        "<dd>巴マミが魔女化した存在。性質は「ご招待」。</dd></dl>"
+    )
+    text, _title = textutil.html_to_text(html)
+    assert "## 此岸の魔女" in text
+    # 見出しの中に別のタグが入っていても、1行の見出しにまとまること
+    assert "## おめかしの魔女 / キャンデロロ（Candeloro）" in text

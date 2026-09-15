@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Iterable, Sequence
 
 from . import extract, fetch, report, textutil
-from .constants import kind_label
+from .constants import is_reference_kind, kind_label
 from .store import StoreError, WorkStore
 
 
@@ -217,13 +217,19 @@ def _surface_map(store: WorkStore, entities: Sequence[str]) -> dict[str, str]:
     return out
 
 
+def _default_require_entity(store: WorkStore, source_version_id: int) -> bool:
+    """人物名を含まない文まで採るかどうかは、出典種別で決める。"""
+    v = store.get_version(source_version_id)
+    return not is_reference_kind(v["kind"] if v else None)
+
+
 def propose_claims(
     store: WorkStore,
     source_version_id: int,
     *,
     entities: Sequence[str] = (),
     limit: int = 50,
-    require_entity: bool = True,
+    require_entity: bool | None = None,
 ) -> list[dict]:
     """ある版の本文から主張候補を切り出す（登録はしない）。
 
@@ -232,6 +238,8 @@ def propose_claims(
     v = store.source_excerpt(source_version_id, offset=0, length=10**7)
     if not v:
         raise StoreError(f"出典版が見つかりません: {source_version_id}")
+    if require_entity is None:
+        require_entity = _default_require_entity(store, source_version_id)
     surfaces = _surface_map(store, list(entities))
     # require_entity=False のときはエンティティで絞らず、文として成立する行をすべて出す。
     # 公式SNSの告知のように、人物名が出ないが作品の事実を含む出典で使う。
@@ -264,7 +272,7 @@ def register_proposed(
     *,
     entities: Sequence[str] = (),
     limit: int = 50,
-    require_entity: bool = True,
+    require_entity: bool | None = None,
 ) -> list[int]:
     """propose_claims の候補をまとめて知識層に登録する。
 
@@ -296,6 +304,7 @@ def register_proposed(
                 source_version_id=source_version_id,
                 entities=c["entities"],
                 locator=c["text"],
+                offset=c.get("offset"),
             )
         )
     store.log("register_proposed", {"source_version_id": source_version_id, "claims": len(ids)})

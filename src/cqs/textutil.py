@@ -18,6 +18,11 @@ _DROP_TAGS = {
     "iframe", "head", "nav", "footer", "form", "select", "button",
 }
 # 前後に改行を入れる要素
+# 見出しであることがHTMLに書いてあるタグ。テキストにしたとき「## 」を冠して残す。
+# 見出しかどうかを行の長さや句読点の有無から推し量ると、
+# 「おめかしの魔女 / キャンデロロ（Candeloro）」のような長い見出しを本文と見なし、
+# その下の記述を1つ前の見出しに取り違える。
+_HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "dt"}
 _BLOCK_TAGS = {
     "p", "div", "section", "article", "header", "main", "aside",
     "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "td", "th",
@@ -39,6 +44,10 @@ class _Extractor(HTMLParser):
         self._row_is_header = True
         self._cell: list[str] | None = None
         self._caption: list[str] | None = None
+        # 見出しは中に別のタグ（アンカー、リンク、注記）が入るので、
+        # 表のセルと同じように中身を溜めてから1行にまとめる。
+        self._heading_depth = 0
+        self._heading: list[str] | None = None
 
     # --- 表 ---
     def _start_table(self) -> None:
@@ -78,6 +87,13 @@ class _Extractor(HTMLParser):
             return
         if tag == "title":
             self._in_title = True
+        if tag in _HEADING_TAGS:
+            if self._heading_depth == 0:
+                self._heading = []
+            self._heading_depth += 1
+            return
+        if self._heading is not None:
+            return
         if tag == "br":
             self.parts.append("\n")
         elif tag in _BLOCK_TAGS:
@@ -113,6 +129,16 @@ class _Extractor(HTMLParser):
             return
         if tag == "title":
             self._in_title = False
+        if tag in _HEADING_TAGS:
+            self._heading_depth = max(0, self._heading_depth - 1)
+            if self._heading_depth == 0:
+                text = re.sub(r"\s+", " ", "".join(self._heading or [])).strip()
+                self._heading = None
+                if text:
+                    self.parts.append(f"\n## {text}\n")
+            return
+        if self._heading is not None:
+            return
         if tag in _BLOCK_TAGS:
             self.parts.append("\n")
 
@@ -121,6 +147,9 @@ class _Extractor(HTMLParser):
             self.title = (self.title or "") + data.strip()
             return
         if self._drop_depth:
+            return
+        if self._heading is not None:
+            self._heading.append(data)
             return
         if self._table_depth:
             if self._cell is not None:

@@ -60,10 +60,15 @@ _VERIF_RANK = {"official": 0, "article": 1, "secondhand": 2, "fan_interpretation
 _Q_TOKEN = re.compile(r"([一-龥々]+)([ぁ-ん]?)|([ァ-ヴー]{2,}|[A-Za-z0-9]{2,})")
 # 語の一部ではなく助詞。「月に」「関係は」を検索語にしても本文には当たらない
 _PARTICLES = frozenset("はがをにへもので")
-# 質問の言い回しであって、作品について何も言っていない語
+# 質問の言い回しであって、作品について何も言っていない語。
+# 形式名詞（「魔女化した際の」の「際」）を残すと、「回復する際」「登場の際」のように
+# 話題の違う文が高い重みで大量に入ってくる。単独の漢字1文字で出てきたときだけ落とす
+# （「劇中」「時間」のように長い語の一部なら、その語ごと検索語になる）。
 _Q_STOP = frozenset({
     "何", "誰", "教", "教え", "詳", "詳し", "説明", "箇条", "箇条書",
     "書", "書い", "述べ", "答え", "一体", "具体", "以下", "上記",
+    "際", "場合", "時", "点", "上", "中", "内", "他", "等", "方",
+    "為", "事", "物", "者", "様", "頃", "前", "後", "間", "的", "性",
 })
 
 
@@ -116,33 +121,63 @@ def term_weight(store: WorkStore, term: str, total: int) -> float:
     return term_weight_for(store.count_claims(term), total)
 
 
-def _best_window(positions: Sequence[int], hits: dict[int, float], width: int) -> tuple[int, int, float]:
-    """当たりが最も密集している、幅 width の区間を返す。
+def _best_windows(
+    positions: Sequence[int], hits: dict[float, float], width: int, slots: int
+) -> list[tuple[int, int]]:
+    """当たりが密な区間を、重ならないように上位から slots 個取る。
 
     出典を丸ごと1つの塊として点を付けると、Wikipediaのように何百件も主張のある出典は
     「当たりの総和は大きいが、当たりどうしが記事の端から端まで散っている」状態になり、
-    正規化で割り引くと今度は該当節ごと沈む。実際に渡すのは連続した一区間なので、
-    その一区間が持つ当たりの量で比べる。
+    正規化で割り引くと今度は該当節ごと沈む。実際に渡すのは連続した区間なので、
+    その区間が持つ当たりの量で比べる。
+
+    区間を1つに限らないのは、「魔法少女それぞれの魔女化」のように**答えが1か所に
+    まとまっていない**質問があるため。1つの記事の中で、人物ごと・用語ごとに離れた
+    場所に少しずつ書かれている。連続した1区間だけを切り出すと、最初の1人分しか渡せない。
     """
     scores = [hits.get(cid, 0.0) for cid in positions]
     n = len(scores)
     if n <= width:
-        return 0, n, sum(scores)
-    cur = sum(scores[:width])
-    best = (0, width, cur)
-    for i in range(1, n - width + 1):
-        cur += scores[i + width - 1] - scores[i - 1]
-        if cur > best[2]:
-            best = (i, i + width, cur)
-    return best
+        return [(0, n)] if n else []
+    taken: list[tuple[int, int]] = []
+    blocked: list[tuple[int, int]] = []
+    for _ in range(max(slots, 1)):
+        best, best_score = None, 0.0
+        cur = sum(scores[:width])
+        for i in range(0, n - width + 1):
+            if i > 0:
+                cur += scores[i + width - 1] - scores[i - 1]
+            if any(i < b and a < i + width for a, b in blocked):
+                continue
+            if cur > best_score:
+                best, best_score = i, cur
+        if best is None or best_score <= 0:
+            break
+        taken.append((best, best + width))
+        blocked.append((best, best + width))
+    return sorted(taken)
+
+
+def window_score(positions: Sequence[int], hits: dict[float, float], width: int, slots: int) -> float:
+    scores = [hits.get(cid, 0.0) for cid in positions]
+    total = 0.0
+    for a, b in _best_windows(positions, hits, width, slots):
+        total += sum(scores[a:b])
+    return total
 
 
 def _claims_in_order(store: WorkStore) -> dict[int, list[int]]:
-    """出典ごとの主張IDを、原文での並び順（=ID順）で返す。"""
+    """出典ごとの主張IDを、原文での並び順で返す。
+
+    主張IDは登録順でしかない。取り込み条件を変えて同じ出典を取り直すと、
+    途中の文が後から末尾のIDで入るため、IDの順は原文の順と一致しなくなる。
+    抽出時に原文中の位置（offset）を控えてあるので、そちらを優先して並べる。
+    """
     order: dict[int, list[int]] = {}
     for r in store.conn.execute(
         "SELECT id, source_version_id AS sv FROM claims "
-        "WHERE status='active' AND source_version_id IS NOT NULL ORDER BY id"
+        "WHERE status='active' AND source_version_id IS NOT NULL "
+        "ORDER BY sv, (offset IS NULL), offset, id"
     ):
         order.setdefault(int(r["sv"]), []).append(int(r["id"]))
     return order
@@ -257,16 +292,21 @@ def retrieve(
 
     # 節が材料を食い尽くさないように、全体の6割までに抑える
     run_budget = max(8, int(max_claims * 0.6 / 3))
+    # 1出典あたりの持ち分を、離れた複数の区間に分けて使えるようにする
+    run_width = max(4, run_budget // 3)
+    run_slots = max(1, run_budget // run_width)
     in_order = _claims_in_order(store)
-    windows: dict[int, tuple[int, int, float]] = {}
-    for svid, items in by_source.items():
-        hits = {c["id"]: score for score, c in items}
-        windows[svid] = _best_window(in_order.get(svid, []), hits, run_budget)
+    hit_map = {svid: {c["id"]: score for score, c in items} for svid, items in by_source.items()}
+    windows: dict[int, list[tuple[int, int]]] = {
+        svid: _best_windows(in_order.get(svid, []), hit_map[svid], run_width, run_slots)
+        for svid in by_source
+    }
 
     def source_score(svid: int, items: list[tuple[float, dict]]) -> float:
-        # 渡すのは連続した一区間なので、その区間が持つ当たりの量で比べる。
-        # 幅が同じなので出典の大きさで割る必要はない。
-        base = windows[svid][2] / math.sqrt(run_budget) + title_bonus(items)
+        # 渡すのは連続した区間なので、その区間が持つ当たりの量で比べる。
+        # 持ち分の幅が同じなので、出典の大きさで割る必要はない。
+        got = window_score(in_order.get(svid, []), hit_map[svid], run_width, run_slots)
+        base = got / math.sqrt(run_budget) + title_bonus(items)
         # 出典の優先順を効かせる。感想noteの節が公式・記事の節を押しのけないように
         return base * (0.5 + items[0][1].get("priority", 0) / 200)
 
@@ -278,8 +318,11 @@ def retrieve(
         if len(items) >= 3 or title_bonus(items) > 0
     ]
     for svid, _ in chosen:
-        start, end, _score = windows[svid]
-        runs.extend(_fetch_claims(store, in_order.get(svid, [])[start:end]))
+        ids = in_order.get(svid, [])
+        picked: list[int] = []
+        for start, end in windows[svid]:
+            picked.extend(ids[start:end])
+        runs.extend(_fetch_claims(store, picked))
         used_sources.append(svid)
 
     # 並び: まず当たりの強い主張（点で答える質問のため）、次に節を原文の並び順で
@@ -287,7 +330,18 @@ def retrieve(
     claims: list[dict] = []
     seen: set[int] = set()
     head_budget = max(4, int(max_claims * 0.4))
-    for _, c in ranked[:head_budget]:
+    # 先頭は「広さ」を担う。同じ節から何件も取ると、「魔法少女それぞれの魔女化」のような
+    # 数え上げの質問で、最初の1人分だけで枠を使い切る。深さは後段の節ごと切り出しが担う。
+    per_section = 3
+    used_sections: dict[tuple[int, str], int] = {}
+    for _, c in ranked:
+        if len(claims) >= head_budget:
+            break
+        key = (int(c["source_version_id"] or 0), split_section(c["text"])[0])
+        if key[1]:
+            if used_sections.get(key, 0) >= per_section:
+                continue
+            used_sections[key] = used_sections.get(key, 0) + 1
         seen.add(c["id"])
         claims.append(c)
     for c in runs:

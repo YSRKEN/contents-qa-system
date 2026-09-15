@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # trigram トークナイザを使う。日本語は空白で区切られないため、
 # 既定の unicode61 では語をまたいだ検索がほぼ効かない。
@@ -165,7 +165,11 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 
 # 後から足した列。既存のDBには ALTER TABLE で追加する。
-_ADDED_COLUMNS = [("sources", "segment", "TEXT")]
+_ADDED_COLUMNS = [
+    ("sources", "segment", "TEXT"),
+    # 原文中での位置。主張IDは登録順でしかないので、取り込み直すと並び順が崩れる
+    ("claims", "offset", "INTEGER"),
+]
 
 
 def migrate(conn: sqlite3.Connection) -> list[str]:
