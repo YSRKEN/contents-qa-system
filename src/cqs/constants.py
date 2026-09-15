@@ -31,6 +31,14 @@ SOURCE_KINDS: dict[str, dict] = {
         "refetch": "once",
         "verification": "article",
     },
+    "transcript": {
+        # 本編のセリフの書き起こし・字幕・名言集。原典が手に入らない作品では
+        # これが一番原典に近い。ただし第三者の書き起こしなので伝聞として扱う。
+        "label": "本編の書き起こし・セリフ引用",
+        "priority": 75,
+        "refetch": "once",
+        "verification": "secondhand",
+    },
     "image_transcript": {
         # 記事に貼られた表・カレンダー・図の画像を読み取った結果。
         # 元の出典が何であれ、読み取りを挟む以上は伝聞として扱う。
