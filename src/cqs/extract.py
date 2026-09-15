@@ -59,6 +59,8 @@ def heading_of(line: str, *, max_len: int = 26) -> str | None:
     文だけを取り出すと「メールの日付から8月16日だと分かります」のように
     主語を失うので、見出しを覚えておいて主張に引き継ぐ。
     """
+    if _IMAGE_LINE.match(line):      # 画像の代替テキストは見出しではない
+        return None
     m = _HEADING_WRAPPED.match(line) or _HEADING_MD.match(line)
     if m:
         core = m.group(1).strip()

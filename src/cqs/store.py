@@ -626,6 +626,28 @@ class WorkStore:
         rows.sort(key=lambda d: (_VERIF_RANK.get(d["verification"], 9), -d["priority"], d["id"]))
         return rows[:limit]
 
+    def count_claims(self, query: str, *, status: str | None = "active") -> int:
+        """語に一致する主張の件数。検索語の効き目（希少さ）を測るのに使う。"""
+        long_terms, short_terms = textutil.split_terms(query)
+        match = textutil.match_expression_for(long_terms)
+        where: list[str] = []
+        args: list[Any] = []
+        if match:
+            sql = "SELECT COUNT(*) FROM claims_fts f JOIN claims c ON c.id = f.rowid"
+            where.append("claims_fts MATCH ?")
+            args.append(match)
+        else:
+            sql = "SELECT COUNT(*) FROM claims c"
+        for t in short_terms:
+            where.append("c.text LIKE ? ESCAPE '\\'")
+            args.append(textutil.like_pattern(t))
+        if status:
+            where.append("c.status = ?")
+            args.append(status)
+        if not where:
+            return 0
+        return int(self.conn.execute(f"{sql} WHERE {' AND '.join(where)}", args).fetchone()[0])
+
     # ---- 候補（他AIの調査報告） -------------------------------------------
     def add_candidates(self, report_version_id: int | None, items: Iterable[dict]) -> int:
         n = 0

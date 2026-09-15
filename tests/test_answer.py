@@ -35,3 +35,47 @@ def test_retrieve_finds_claims_without_entities_via_terms(store):
 
     with_terms = answer.retrieve(store, "かぐやが月に帰った日付は？", extra_terms=["満月"])
     assert "2030年の9/12はリアルでも満月です。" in [c["text"] for c in with_terms["claims"]]
+
+
+def test_question_terms_splits_a_sentence(store):
+    """質問文をまるごと全文検索に渡すと必ず0件になる。語に割ること。"""
+    assert set(answer.question_terms("作品内の時系列を箇条書きで書いて")) == {"箇条書", "時系列", "作品内"}
+
+
+def test_retrieve_returns_a_section_in_document_order(store):
+    """順序が答えになる質問では、当たった出典を並び順ごと返すこと。"""
+    from cqs import ingest
+
+    text = (
+        "<かぐやを拾った日>\n7/11に拾ったと分かります。\n"
+        "<ミニライブの日>\n7/18に開演しました。\n"
+        "<卒業ライブ>\n9/12は満月です。\n"
+        "まとめ\n・時系列としては7/11から9/12までの出来事です。\n"
+    )
+    r = ingest.ingest_text(store, text, kind="fan_chronicle", title="作中の時系列まとめ")
+    ingest.register_proposed(store, r["source_version_id"], require_entity=False)
+    # 別の出典を厚めに入れて、件数の多さだけで勝たないことも見る
+    other = ingest.ingest_text(
+        store, "\n".join(f"時系列とは関係のない話題その{i}です。" for i in range(30)),
+        kind="article", title="関係のない記事")
+    ingest.register_proposed(store, other["source_version_id"], require_entity=False)
+
+    ctx = answer.retrieve(store, "作中の時系列を教えて", max_claims=20)
+    texts = [c["text"] for c in ctx["claims"]]
+    assert "かぐやを拾った日: 7/11に拾ったと分かります。" in texts
+    assert "卒業ライブ: 9/12は満月です。" in texts
+    # 原文の並び順が保たれている
+    assert texts.index("かぐやを拾った日: 7/11に拾ったと分かります。") < texts.index("卒業ライブ: 9/12は満月です。")
+
+
+def test_retrieve_pulls_in_contradicting_claims(store):
+    sid = store.add_source(url="https://a.example", kind="official_sns", title="公式")
+    v = store.add_version(sid, text="誕生日は7月12日です。")
+    a = store.add_claim(text="かぐやの誕生日は7月12日である。", source_version_id=v.version_id, entities=["かぐや"])
+    sid2 = store.add_source(url="https://b.example", kind="fan_chronicle", title="ファン整理")
+    v2 = store.add_version(sid2, text="誕生日は7月5日とされる。")
+    b = store.add_claim(text="かぐやの誕生日は7月5日とされる。", source_version_id=v2.version_id)
+    store.link_claims(a, b, "contradicts")
+    ctx = answer.retrieve(store, "かぐやの誕生日は？", max_claims=5)
+    ids = [c["id"] for c in ctx["claims"]]
+    assert a in ids and b in ids
