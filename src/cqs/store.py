@@ -140,6 +140,52 @@ class WorkStore:
         )
         self.conn.commit()
 
+    def segment_rules(self) -> list[list[str]]:
+        """[URLに含まれる文字列, 区分] の並び。作品ごとにDBへ持つ。"""
+        raw = self.meta.get("segment_rules")
+        if not raw:
+            return []
+        try:
+            return [list(x) for x in json.loads(raw)]
+        except Exception:
+            return []
+
+    def set_segment_rule(self, pattern: str, segment: str) -> None:
+        rules = [r for r in self.segment_rules() if r[0] != pattern]
+        rules.append([pattern, segment])
+        self.conn.execute(
+            "INSERT INTO meta(key, value) VALUES ('segment_rules', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(rules, ensure_ascii=False),),
+        )
+        self.conn.commit()
+
+    def guess_segment(self, url: str) -> str | None:
+        """URLから、どの作品についての出典かを推定する。"""
+        u = (url or "").lower()
+        for pattern, segment in self.segment_rules():
+            if pattern.lower() in u:
+                return segment
+        return None
+
+    def set_source_segment(self, source_id: int, segment: str | None) -> None:
+        if not self.get_source(source_id):
+            raise StoreError(f"出典が見つかりません: {source_id}")
+        self.conn.execute("UPDATE sources SET segment = ? WHERE id = ?", (segment, source_id))
+        self.conn.commit()
+        self.log("set_source_segment", {"source_id": source_id, "segment": segment})
+
+    def apply_segment_rules(self) -> int:
+        """登録済みの出典に、いまのルールを当て直す。"""
+        n = 0
+        for s in self.conn.execute("SELECT id, url FROM sources WHERE url IS NOT NULL").fetchall():
+            seg = self.guess_segment(s["url"])
+            if seg:
+                self.conn.execute("UPDATE sources SET segment = ? WHERE id = ?", (seg, s["id"]))
+                n += 1
+        self.conn.commit()
+        return n
+
     def guess_kind(self, url: str, *, default: str = "article") -> str:
         """URLから出典種別を推定する。作品固有のルール > 一般ルール > 既定。"""
         u = url.lower()
@@ -170,6 +216,7 @@ class WorkStore:
         title: str | None = None,
         note: str | None = None,
         refetch: str | None = None,
+        segment: str | None = None,
     ) -> int:
         if kind not in SOURCE_KINDS:
             raise StoreError(f"未知の出典種別: {kind}（有効: {', '.join(SOURCE_KINDS)}）")
@@ -178,8 +225,10 @@ class WorkStore:
             if row:
                 return int(row["id"])
         cur = self.conn.execute(
-            "INSERT INTO sources(url, kind, title, note, refetch, created_at) VALUES (?,?,?,?,?,?)",
-            (url, kind, title, note, refetch or default_refetch(kind), now()),
+            "INSERT INTO sources(url, kind, title, note, refetch, segment, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (url, kind, title, note, refetch or default_refetch(kind),
+             segment or (self.guess_segment(url) if url else None), now()),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -278,7 +327,7 @@ class WorkStore:
 
     def get_version(self, version_id: int) -> dict | None:
         r = self.conn.execute(
-            "SELECT v.*, s.url, s.kind, s.title AS source_title, s.note AS source_note "
+            "SELECT v.*, s.url, s.kind, s.segment, s.title AS source_title, s.note AS source_note "
             "FROM source_versions v JOIN sources s ON s.id = v.source_id WHERE v.id = ?",
             (version_id,),
         ).fetchone()
@@ -350,7 +399,7 @@ class WorkStore:
         if match:
             sql = (
                 "SELECT v.id, v.source_id, v.version_no, v.fetched_at, v.title, v.text, "
-                "       s.url, s.kind, s.title AS source_title, bm25(source_versions_fts) AS score "
+                "       s.url, s.kind, s.segment, s.title AS source_title, bm25(source_versions_fts) AS score "
                 "FROM source_versions_fts f "
                 "JOIN source_versions v ON v.id = f.rowid "
                 "JOIN sources s ON s.id = v.source_id "
@@ -362,7 +411,7 @@ class WorkStore:
                 return []
             sql = (
                 "SELECT v.id, v.source_id, v.version_no, v.fetched_at, v.title, v.text, "
-                "       s.url, s.kind, s.title AS source_title, 0 AS score "
+                "       s.url, s.kind, s.segment, s.title AS source_title, 0 AS score "
                 "FROM source_versions v JOIN sources s ON s.id = v.source_id "
                 "WHERE 1=1"
             )
@@ -588,7 +637,7 @@ class WorkStore:
     _CLAIM_SELECT = (
         "SELECT c.id, c.text, c.verification, c.status, c.locator, c.note, "
         "       c.created_at, c.updated_at, c.source_version_id, "
-        "       v.version_no, v.fetched_at, s.url, s.kind, s.title AS source_title "
+        "       v.version_no, v.fetched_at, s.url, s.kind, s.segment, s.title AS source_title "
         "FROM claims c "
         "LEFT JOIN source_versions v ON v.id = c.source_version_id "
         "LEFT JOIN sources s ON s.id = v.source_id "

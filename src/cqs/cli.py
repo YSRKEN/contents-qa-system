@@ -434,6 +434,30 @@ def cmd_entity(args: argparse.Namespace) -> None:
                 print(f"{r['name']}  同じ主張に {r['shared']} 件")
 
 
+def cmd_segment(args: argparse.Namespace) -> None:
+    with _store(args) as st:
+        if args.segment_command == "rule":
+            if args.pattern is None:
+                rules = st.segment_rules()
+                _out(args, rules, "\n".join(f"{p} → {seg}" for p, seg in rules) or "（ルールなし）")
+                return
+            st.set_segment_rule(args.pattern, args.segment)
+            n = st.apply_segment_rules()
+            _out(args, {"ok": True, "applied": n},
+                 f"ルールを追加しました: {args.pattern} → {args.segment}（既存 {n} 件に反映）")
+        elif args.segment_command == "set":
+            st.set_source_segment(args.source_id, args.segment or None)
+            _out(args, {"ok": True}, f"出典 {args.source_id} の区分を {args.segment or '（なし）'} にしました")
+        elif args.segment_command == "apply":
+            n = st.apply_segment_rules()
+            _out(args, {"applied": n}, f"{n}件の出典に区分を付けました")
+        else:
+            rows = [dict(r) for r in st.conn.execute(
+                "SELECT COALESCE(segment, '（未分類）') AS segment, COUNT(*) AS sources "
+                "FROM sources GROUP BY 1 ORDER BY sources DESC")]
+            _out(args, rows, "\n".join(f"{r['segment']}  出典{r['sources']}件" for r in rows) or "（出典なし）")
+
+
 def cmd_rule(args: argparse.Namespace) -> None:
     with _store(args) as st:
         if args.pattern is None:
@@ -634,6 +658,22 @@ def build_parser() -> argparse.ArgumentParser:
     e3 = esub.add_parser("related")
     e3.add_argument("name")
     e3.set_defaults(func=cmd_entity)
+
+    sp = sub.add_parser("segment", help="出典がどの作品についての記述かを分ける（区分）")
+    gsub = sp.add_subparsers(dest="segment_command")
+    sp.set_defaults(func=cmd_segment, segment_command=None)
+    g1 = gsub.add_parser("list", help="区分ごとの出典数")
+    g1.set_defaults(func=cmd_segment)
+    g2 = gsub.add_parser("rule", help="URLから区分を決めるルール")
+    g2.add_argument("pattern", nargs="?")
+    g2.add_argument("segment", nargs="?")
+    g2.set_defaults(func=cmd_segment)
+    g3 = gsub.add_parser("set", help="出典の区分を直接指定する")
+    g3.add_argument("source_id", type=int)
+    g3.add_argument("segment", nargs="?")
+    g3.set_defaults(func=cmd_segment)
+    g4 = gsub.add_parser("apply", help="ルールを既存の出典に当てはめる")
+    g4.set_defaults(func=cmd_segment)
 
     sp = sub.add_parser("rule", help="URLから出典種別を決めるルール")
     sp.add_argument("pattern", nargs="?")

@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # trigram トークナイザを使う。日本語は空白で区切られないため、
 # 既定の unicode61 では語をまたいだ検索がほぼ効かない。
@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS sources (
     title      TEXT,
     note       TEXT,
     refetch    TEXT NOT NULL DEFAULT 'once',   -- periodic | once
+    -- 同じ作品世界の中でも、どの作品についての記述かを分ける
+    -- （TVシリーズ / 劇場版 / スピンオフゲーム など）。作品ごとに自由に決める。
+    segment    TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -161,6 +164,23 @@ CREATE TABLE IF NOT EXISTS activity_log (
 """
 
 
+# 後から足した列。既存のDBには ALTER TABLE で追加する。
+_ADDED_COLUMNS = [("sources", "segment", "TEXT")]
+
+
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    """既存のDBに、後から足した列を追加する。"""
+    applied = []
+    for table, column, decl in _ADDED_COLUMNS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            applied.append(f"{table}.{column}")
+    if applied:
+        conn.commit()
+    return applied
+
+
 def connect(path: str | Path, *, create: bool = True) -> sqlite3.Connection:
     """作品DBに接続する。存在しなければ（create=True なら）スキーマを作る。"""
     path = Path(path)
@@ -173,6 +193,7 @@ def connect(path: str | Path, *, create: bool = True) -> sqlite3.Connection:
     if create:
         conn.executescript(SCHEMA)
         conn.commit()
+    migrate(conn)
     return conn
 
 

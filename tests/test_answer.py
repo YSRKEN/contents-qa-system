@@ -79,3 +79,17 @@ def test_retrieve_pulls_in_contradicting_claims(store):
     ctx = answer.retrieve(store, "かぐやの誕生日は？", max_claims=5)
     ids = [c["id"] for c in ctx["claims"]]
     assert a in ids and b in ids
+
+
+def test_prompt_shows_which_work_a_claim_describes(store):
+    """関連作品をまとめて1つのDBに入れた場合、区分を伏せたまま並べさせない。"""
+    store.set_segment_rule("example.com/movie", "劇場版")
+    sid = store.add_source(url="https://example.com/movie/", kind="official_site", title="劇場版公式")
+    v = store.add_version(sid, text="ほむらは最後に街を去る。")
+    store.ensure_entity("ほむら")
+    store.add_claim(text="ほむらは最後に街を去る。", source_version_id=v.version_id, entities=["ほむら"])
+
+    ctx = answer.retrieve(store, "ほむらの結末は？")
+    body = answer.format_context(ctx)
+    assert "区分: 劇場版" in body
+    assert "区分" in answer.build_prompt(ctx)["system"]

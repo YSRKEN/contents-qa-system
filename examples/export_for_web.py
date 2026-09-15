@@ -11,14 +11,15 @@ for w in config.list_works():
         continue
     with config.open_work(w["file_slug"]) as st:
         claims = [{"id":c["id"],"t":c["text"],"v":c["verification"],"k":c["kind"] or "","u":c["url"] or "",
-                   "st":c["status"],"sv":c["source_version_id"],"e":c["entities"],"x":c["contradicts"]}
+                   "st":c["status"],"sv":c["source_version_id"],"e":c["entities"],"x":c["contradicts"],
+                   "g":c["segment"] or ""}
                   for c in st.search_claims(status=None, limit=100000)]
         sources = []
         for s in st.list_sources():
             v = st.latest_version(s["id"])
             if not v: continue
             sources.append({"sv":int(v["id"]),"id":s["id"],"k":s["kind"],"u":s["url"] or "",
-                            "ti":s["title"] or "","at":v["fetched_at"],"n":v["version_no"],
+                            "ti":s["title"] or "","at":v["fetched_at"],"n":v["version_no"],"g":s["segment"] or "",
                             "tx":st.source_excerpt(int(v["id"]), length=10**7)["excerpt"]})
         works.append({
             "work": {"title": st.meta.get("title"), "slug": st.meta.get("slug"),

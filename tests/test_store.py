@@ -149,3 +149,30 @@ def test_wiki_grounds_claims_as_secondhand(store):
     _, v = _src(store, kind="wiki_index", url="https://ja.wikipedia.org/wiki/x")
     cid = store.add_claim(text="小説版の著者は誰それである。", source_version_id=v.version_id)
     assert store.get_claim(cid)["verification"] == "secondhand"
+
+
+def test_segment_rules_tag_sources_by_which_work_they_describe(store):
+    """同じ作品世界でも、どの作品の記述かは確認状態とは別の軸で持つ。"""
+    store.set_segment_rule("example.com/tv", "TVシリーズ")
+    store.set_segment_rule("example.com/movie", "劇場版")
+    sid_tv, v_tv = _src(store, url="https://example.com/tv/story")
+    sid_mv, v_mv = _src(store, url="https://example.com/movie/story")
+    sid_x, _ = _src(store, url="https://example.com/other")
+    assert store.get_source(sid_tv)["segment"] == "TVシリーズ"
+    assert store.get_source(sid_mv)["segment"] == "劇場版"
+    assert store.get_source(sid_x)["segment"] is None
+
+    cid = store.add_claim(text="結末はこうなる。", source_version_id=v_mv.version_id)
+    assert store.get_claim(cid)["segment"] == "劇場版"
+
+
+def test_segment_can_be_set_by_hand_and_rules_applied_later(store):
+    sid, _ = _src(store, url="https://example.com/spinoff/1")
+    store.set_source_segment(sid, "スピンオフ")
+    assert store.get_source(sid)["segment"] == "スピンオフ"
+    # 後からルールを足した場合は、当て直しで既存の出典にも反映する
+    store.set_segment_rule("example.com/spinoff", "外伝ゲーム")
+    assert store.apply_segment_rules() == 1
+    assert store.get_source(sid)["segment"] == "外伝ゲーム"
+    store.set_source_segment(sid, None)
+    assert store.get_source(sid)["segment"] is None

@@ -26,6 +26,9 @@ SYSTEM_PROMPT = """あなたは特定の作品について、蓄積された出�
   下位の出典が上位と食い違う場合は、両方を並べ、どちらがどの出典かを示す。
 - 主張どうしが矛盾している場合は、片方を選ばず両方を提示する。
 - 同じ出典から取り出した主張は、claim ID の小さい順が原文での並び順に対応する。時系列を組み立てるときの手がかりにしてよい。
+- 一部の主張には「区分」が付いている。同じ作品世界でも、どの作品（TVシリーズ／劇場版／スピンオフなど）についての記述かを表す。
+  区分の違う主張を、区分を伏せたまま同じ作品の事実として並べない。答える際はどの区分の記述かを示し、
+  区分をまたぐ食い違いは矛盾ではなく「作品ごとの違い」として扱う。質問が区分を指定している場合は、その区分の主張を優先する。
 - 根拠にした主張は、末尾で claim ID と出典URLを挙げる。
 - 感想noteは「そう感じた人がいる」という事実の根拠にはなるが、作品内の事実の根拠にはしない。
 """
@@ -246,10 +249,11 @@ def format_context(ctx: dict[str, Any]) -> str:
     for c in ctx["claims"]:
         src = c.get("url") or c.get("source_title") or "（出典なし）"
         extra = f" / 矛盾: claim {', '.join(str(x) for x in c['contradicts'])}" if c["contradicts"] else ""
+        seg = f" / 区分: {c['segment']}" if c.get("segment") else ""
         lines.append(
             f"- [claim {c['id']}] {c['text']}\n"
             f"    確認状態: {c['verification_label']}（{c['verification']}） / "
-            f"出典種別: {c['kind_label']} / 出典: {src}{extra}"
+            f"出典種別: {c['kind_label']}{seg} / 出典: {src}{extra}"
         )
 
     lines.append("")
@@ -258,9 +262,10 @@ def format_context(ctx: dict[str, Any]) -> str:
         lines.append("（該当なし）")
     for s in ctx["sources"]:
         note = "" if s["citable"] else "  ※この出典種別は根拠にできない（候補どまり）"
+        ssg = f" / 区分: {s['segment']}" if s.get("segment") else ""
         lines.append(
             f"- [source_version {s['source_version_id']}] {s.get('source_title') or s.get('title') or ''}"
-            f" / {s['kind_label']} / {s.get('url') or ''}{note}\n    …{s['excerpt']}…"
+            f" / {s['kind_label']}{ssg} / {s.get('url') or ''}{note}\n    …{s['excerpt']}…"
         )
     return "\n".join(lines)
 
