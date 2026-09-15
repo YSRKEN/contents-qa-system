@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contents-qa-system"
+version = "0.1.0"
+description = "二次情報から作品知識を出典付きで蓄積し、検索・質問応答するための個人用システム"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "YSRKEN" }]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+llm = ["anthropic>=0.40"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+cqs = "cqs.cli:main"
+cqs-mcp = "cqs.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cqs = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

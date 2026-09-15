@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>作品QAシステム</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>作品QAシステム</h1>
+  <div id="works" class="worktabs"></div>
+  <div id="workstats" class="muted"></div>
+</header>
+
+<nav id="tabs" class="tabs">
+  <button data-tab="ask" class="active">質問する</button>
+  <button data-tab="search">検索＆追加</button>
+  <button data-tab="input">直接入力</button>
+  <button data-tab="candidates">候補の照合</button>
+  <button data-tab="manage">管理</button>
+</nav>
+
+<main>
+  <!-- 質問 -->
+  <section id="tab-ask" class="tab active">
+    <form id="askForm">
+      <input id="askQ" type="text" placeholder="例: かぐやと彩葉の関係は？" autocomplete="off">
+      <label><input type="checkbox" id="askLLM" checked> LLMに回答させる（APIキーが必要）</label>
+      <button type="submit">質問</button>
+    </form>
+    <div id="askOut"></div>
+  </section>
+
+  <!-- 検索＆追加 -->
+  <section id="tab-search" class="tab">
+    <form id="searchForm">
+      <input id="searchQ" type="text" placeholder="キーワード / エンティティ名" autocomplete="off">
+      <select id="searchKind"><option value="">出典種別すべて</option></select>
+      <select id="searchVerif"><option value="">確認状態すべて</option></select>
+      <button type="submit">検索</button>
+    </form>
+    <div class="cols">
+      <div>
+        <h2>知識層の主張</h2>
+        <div id="claimOut"></div>
+      </div>
+      <div>
+        <h2>原文層の該当箇所</h2>
+        <div id="srcOut"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 直接入力 -->
+  <section id="tab-input" class="tab">
+    <div class="cols">
+      <div>
+        <h2>資料を貼り付ける</h2>
+        <p class="muted">手元の資料・書き起こしなどを原文層にそのまま入れる。</p>
+        <form id="docForm">
+          <input id="docTitle" placeholder="タイトル（必須）" required>
+          <select id="docKind"></select>
+          <input id="docUrl" placeholder="URL（あれば）">
+          <textarea id="docText" rows="12" placeholder="本文を貼り付け" required></textarea>
+          <button type="submit">原文層に入れる</button>
+        </form>
+      </div>
+      <div>
+        <h2>他AIの調査結果を貼り付ける</h2>
+        <p class="muted">
+          報告そのものは根拠にしない。(URL, 主張) の対を候補として積み、
+          実際にURLを取得して照合するまで知識層には入らない。
+        </p>
+        <form id="repForm">
+          <input id="repTitle" placeholder="タイトル（必須）" required>
+          <textarea id="repText" rows="14" placeholder="Deep Research の結果を貼り付け" required></textarea>
+          <button type="submit">候補として取り込む</button>
+        </form>
+      </div>
+    </div>
+    <h2>URLから取得</h2>
+    <form id="fetchForm" class="inline">
+      <input id="fetchUrl" placeholder="https://..." style="flex:1">
+      <select id="fetchKind"><option value="">種別を自動判定</option></select>
+      <button type="submit">取得</button>
+    </form>
+    <div id="inputOut"></div>
+  </section>
+
+  <!-- 候補 -->
+  <section id="tab-candidates" class="tab">
+    <div class="inline">
+      <button id="candReload">候補を読み込む</button>
+      <label>一度に照合する件数 <input id="candLimit" type="number" value="5" min="1" max="50" style="width:5em"></label>
+      <label><input type="checkbox" id="candPromote"> 一致率</label>
+      <input id="candThreshold" type="number" value="0.8" step="0.05" min="0" max="1" style="width:5em"> 以上を自動登録
+      <button id="candVerify">照合する</button>
+    </div>
+    <div id="candOut"></div>
+  </section>
+
+  <!-- 管理 -->
+  <section id="tab-manage" class="tab">
+    <div class="cols">
+      <div>
+        <h2>出典</h2>
+        <div class="inline">
+          <button id="refetchBtn">再取得（公式サイト等）</button>
+        </div>
+        <div id="srcListOut"></div>
+      </div>
+      <div>
+        <h2>エンティティ</h2>
+        <form id="entForm" class="inline">
+          <input id="entName" placeholder="名前" required>
+          <input id="entKind" placeholder="種別(character等)" style="width:9em">
+          <input id="entAlias" placeholder="別名(カンマ区切り)">
+          <button type="submit">登録</button>
+        </form>
+        <div id="entOut"></div>
+      </div>
+    </div>
+    <h2>作品を追加</h2>
+    <form id="workForm" class="inline">
+      <input id="workTitle" placeholder="作品名" required>
+      <input id="workSlug" placeholder="スラッグ（省略可）">
+      <button type="submit">作成</button>
+    </form>
+    <div id="manageOut"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

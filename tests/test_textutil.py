@@ -1,0 +1,54 @@
+from cqs import textutil
+
+
+def test_html_to_text_drops_scripts_and_keeps_title():
+    html = (
+        "<html><head><title>作品トップ</title><style>b{}</style>"
+        "<script>alert(1)</script></head><body><nav>メニュー</nav>"
+        "<h1>登場人物</h1><p>かぐや<br>彩葉</p></body></html>"
+    )
+    text, title = textutil.html_to_text(html)
+    assert title == "作品トップ"
+    assert "alert" not in text and "メニュー" not in text
+    assert "かぐや" in text and "彩葉" in text
+
+
+def test_clean_text_collapses_blank_lines():
+    assert textutil.clean_text("a\n\n\n\nb") == "a\n\nb"
+
+
+def test_split_sentences():
+    s = textutil.split_sentences("かぐやは姫である。彩葉は高校生だ！短い")
+    assert s == ["かぐやは姫である。", "彩葉は高校生だ！"]
+
+
+def test_fts_expression_quotes_terms():
+    assert textutil.fts_match_expression("かぐや 月の都") == '"かぐや" AND "月の都"'
+    assert textutil.fts_match_expression("「酒寄 彩葉」") == '"酒寄 彩葉"'
+
+
+def test_short_terms_are_split_out_for_like():
+    # trigram は3文字未満を索引化しない。2文字の人名は LIKE 側に回す
+    long_terms, short_terms = textutil.split_terms("かぐや 彩葉")
+    assert long_terms == ["かぐや"] and short_terms == ["彩葉"]
+    assert textutil.fts_match_expression("彩葉") is None
+
+
+def test_normalize_query_folds_fullwidth():
+    assert textutil.normalize_query("ＡＢＣ１２３") == "ABC123"
+
+
+def test_excerpt_centers_on_needle():
+    text = "あ" * 100 + "かぐや" + "い" * 100
+    assert "かぐや" in textutil.excerpt(text, "かぐや", width=30)
+
+
+def test_split_sentences_does_not_break_inside_brackets():
+    # 作品名「超かぐや姫！」の「！」で切ってはいけない
+    got = textutil.split_sentences("アニメ「超かぐや姫！」が配信された。次の文はこれ。")
+    assert got == ["アニメ「超かぐや姫！」が配信された。", "次の文はこれ。"]
+
+
+def test_join_wrapped_lines_reconnects_comma_endings():
+    joined = textutil.join_wrapped_lines("17歳の女子高生・彩葉は、\n多忙な日々を送っていた。\nかぐや")
+    assert joined == "17歳の女子高生・彩葉は、多忙な日々を送っていた。\nかぐや"

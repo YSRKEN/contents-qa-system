@@ -1,0 +1,170 @@
+# contents-qa-system（作品QAシステム）
+
+原典（シナリオ・脚本など）が手に入らない作品について、公式サイト・記事・SNS・感想noteといった
+**二次情報を出典付きで蓄積し、検索・質問応答する**ための個人用システムです。
+
+要点は「LLM＋検索」そのものではなく、**二次情報の食い違いと更新をどう管理するか**にあります。
+そのため、知識を「出典付きの主張」単位で持ち、上書き履歴を残し、出典種別ごとに回答での扱いを変えます。
+
+```
+公式サイト・Wiki ─┐
+記事・note・SNS ─┼→ 原文層（不変・全文スナップショット）→ 抽出・照合 → 知識層（主張・出典・確認状態）
+他AIの調査報告  ─┘         ↑ 再取得で版を積む                           ↓
+                                                            検索ツール（CLI / MCP / Web UI）→ LLM
+```
+
+作品ごとに **1つのSQLiteファイル**（`data/<slug>.db`）を持ちます。ソースコードは作品に依存しません。
+別の作品を扱いたければDBファイルを足すだけです。
+
+## 3つの層
+
+| 層 | 実体 | 性質 |
+|---|---|---|
+| 原文層 | `sources` / `source_versions` | 不変。取得した本文をURL・取得日時・版番号つきで積む。差し替えず追加のみ |
+| 知識層 | `claims` / `entities` / `claim_links` | 編集可。「主張」1件ずつに出典IDと確認状態が付く。古い主張は消さず上書き扱いにする |
+| 回答層 | CLI `ask` / MCPツール / Web UI | 確認状態と出典種別に応じて、断定するか・出典を添えるか・解釈として述べるかを変える |
+
+### 出典種別と確認状態
+
+出典種別から確認状態が機械的に決まります（人が上書きすることもできます）。
+
+| 出典種別 | 既定の確認状態 | 回答での扱い | 再取得 |
+|---|---|---|---|
+| 公式サイト / 公式SNS | 公式確認 | 作品内の事実として断定してよい | 版を積む |
+| インタビュー / 紹介記事・報道 | 記事のみ | 出典を添えて提示する。断定しない | 1回取得で確定 |
+| 感想note・ファン考察 | ファン解釈 | 「そう解釈する感想がある」形でのみ述べる。作品内の事実の根拠にしない | 1回取得で確定 |
+| Wiki | 未検証 | 根拠にしない。出典欄から原資料を辿るための索引として扱う | 版を積む |
+| 他AIの調査報告 | 未検証 | **知識層の根拠にできない**（DB側で拒否する）。候補どまり | 1回取得で確定 |
+
+再取得で本文が変化すると、その出典に依存する主張は自動で **要再確認** に落ちます。
+
+## インストール
+
+Python 3.10以上。コア機能（CLI・Web UI）は標準ライブラリだけで動きます。
+
+```bash
+git clone https://github.com/YSRKEN/contents-qa-system.git
+cd contents-qa-system
+pip install -e .                 # CLI と Web UI
+pip install -e ".[mcp]"          # Claude Desktop / Claude Code から使う場合
+pip install -e ".[llm]"          # cqs ask / Web UI にその場で回答させる場合
+```
+
+`.env.example` を見て、必要なら `CQS_DATA_DIR` や `ANTHROPIC_API_KEY` を設定してください。
+
+## 使いはじめ
+
+```bash
+cqs new "作品名"                                   # data/作品名.db を作る
+cqs works                                          # 作品一覧
+
+cqs -w 作品名 entity add "キャラ名" --kind character --alias "略称"
+cqs -w 作品名 fetch https://example.com/character   # URLを取得して原文層へ
+cqs -w 作品名 propose 1                             # その版から主張候補を切り出す（登録はしない）
+cqs -w 作品名 claim add --text "…" --source-version 1 --entity "キャラ名"
+
+cqs -w 作品名 claims --entity "キャラ名"            # 知識層を引く
+cqs -w 作品名 search "キーワード"                   # 原文層を引く
+cqs -w 作品名 ask "キャラ名の交流関係は？"
+cqs -w 作品名 serve                                 # ブラウザUI（既定 http://127.0.0.1:8765）
+```
+
+作品固有の取り込み手順を書く例は `examples/ingest_cho_kaguyahime.py` にあります。
+
+### 他AIの調査結果を取り込む
+
+報告そのものは根拠になりません。`(URL, 主張)` の対を候補として積み、
+**実際にURLを取得して主張がそのページに書かれているか照合してから**知識層に入れます。
+
+```bash
+cqs -w 作品名 add-report --title "Deep Research結果" --file report.md
+cqs -w 作品名 candidates                 # 未照合の候補
+cqs -w 作品名 verify --limit 5           # URLを取得して照合（登録はしない）
+cqs -w 作品名 verify --limit 5 --promote 0.9   # 一致率0.9以上だけ自動登録
+```
+
+照合の一致率は目安です。たとえば公式サイトが「CV夏吉ゆうこ」と書いているとき、
+「声優は夏吉ゆうこである」という主張は「声優」という語が無いぶん一致率が下がります。
+値が低い＝誤りとは限らず、値が高い＝正しいとも限らないので、採否は人かLLMが本文を見て決めてください。
+
+## ブラウザUI
+
+```bash
+cqs serve
+```
+
+上部のタブで作品を切り替え、以下を行えます。
+
+- **質問する** — 質問 → 検索 → 回答。APIキーがあればその場で回答し、無ければ Claude に貼れるプロンプトを出します
+- **検索＆追加** — 知識層と原文層を同時に引き、原文の該当箇所からその場で主張を登録
+- **直接入力** — 手元の資料の貼り付け／他AIの調査結果の貼り付け／URL取得
+- **候補の照合** — 未照合候補の一覧と照合実行
+- **管理** — 出典一覧・再取得・エンティティ登録・作品追加
+
+127.0.0.1 にのみ待ち受け、認証は持ちません（自分専用の前提）。
+
+## Claude Desktop / Claude Code から使う（MCP）
+
+`pip install -e ".[mcp]"` のうえで、設定に追加します。
+
+```jsonc
+// claude_desktop_config.json
+{
+  "mcpServers": {
+    "contents-qa": {
+      "command": "cqs-mcp",
+      "env": { "CQS_DATA_DIR": "/path/to/contents-qa-system/data" }
+    }
+  }
+}
+```
+
+Claude Code なら:
+
+```bash
+claude mcp add contents-qa --env CQS_DATA_DIR=$PWD/data -- cqs-mcp
+```
+
+提供するツール:
+
+| 分類 | ツール |
+|---|---|
+| 検索（中核の3つ） | `search_claims` / `search_sources` / `get_source` |
+| 見取り図 | `list_works` / `list_entities` / `related_entities` / `gather_for_question` |
+| 取り込み | `fetch_url` / `add_document` / `add_ai_report` |
+| 照合 | `list_candidates` / `verify_candidates` |
+| 知識層の編集 | `add_claim` / `link_claims` / `add_entity` / `propose_claims` |
+
+返却値には確認状態・出典種別・その扱い方（`handling`）が必ず入ります。
+回答側はその値に従い、公式確認は断定、記事のみは出典付き、ファン解釈は解釈として述べます。
+
+## 取得についての約束
+
+- 既定で `robots.txt` を確認し、許可されていないURLは取得しません（`--no-robots` で外せます）。
+- 同一ホストへの連続アクセスには既定1.5秒の間隔を空けます。
+- 取得した本文は各作品のDBファイルにのみ保存され、このリポジトリには入りません（`.gitignore` 済み）。
+
+## リポジトリに入るもの／入らないもの
+
+| | |
+|---|---|
+| push する | ソースコード、テスト、設計メモ、取り込みスクリプトの例 |
+| push しない | `data/*.db`（原文スナップショットと抽出した主張）、`.env`、取得キャッシュ |
+
+第三者の文章をそのまま保持するため、DBファイルは私的利用の範囲にとどめてください。
+
+## 開発
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+## ドキュメント
+
+- [`docs/design.md`](docs/design.md) — 最初の設計メモ
+- [`docs/design-review.md`](docs/design-review.md) — 実装して分かったこと、設計から変えた点、未解決事項
+
+## ライセンス
+
+MIT License（[LICENSE](LICENSE)）。

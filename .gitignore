@@ -1,0 +1,36 @@
+# 作品ごとのDB（原文スナップショットを含むため公開しない）
+data/*
+!data/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+
+# 取得キャッシュ・作業ファイル
+.cache/
+snapshots/
+*.log
+
+# 秘密情報
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# エディタ/OS
+.vscode/
+.idea/
+.DS_Store

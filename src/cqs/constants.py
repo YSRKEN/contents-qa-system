@@ -1,0 +1,105 @@
+"""出典種別・確認状態など、層をまたいで参照される語彙の定義。"""
+
+from __future__ import annotations
+
+# --- 出典種別 ---------------------------------------------------------------
+# priority: 回答時の優先順。大きいほど優先する。
+# refetch:  既定の再取得方針。'periodic' は版を積む対象、'once' は1回取得で確定。
+# verification: その出典から抽出した主張に機械的に与える確認状態。
+SOURCE_KINDS: dict[str, dict] = {
+    "official_site": {
+        "label": "公式サイト",
+        "priority": 100,
+        "refetch": "periodic",
+        "verification": "official",
+    },
+    "official_sns": {
+        "label": "公式SNS",
+        "priority": 95,
+        "refetch": "periodic",
+        "verification": "official",
+    },
+    "interview": {
+        "label": "インタビュー",
+        "priority": 70,
+        "refetch": "once",
+        "verification": "article",
+    },
+    "article": {
+        "label": "紹介記事・報道",
+        "priority": 60,
+        "refetch": "once",
+        "verification": "article",
+    },
+    "fan_note": {
+        "label": "感想note・ファン考察",
+        "priority": 30,
+        "refetch": "once",
+        "verification": "fan_interpretation",
+    },
+    "wiki_index": {
+        "label": "Wiki（探索用インデックス）",
+        "priority": 10,
+        "refetch": "periodic",
+        "verification": "unverified",
+    },
+    "ai_report": {
+        "label": "他AIの調査報告",
+        "priority": 0,
+        "refetch": "once",
+        "verification": "unverified",
+    },
+    "manual": {
+        "label": "手動入力・手持ち資料",
+        "priority": 50,
+        "refetch": "once",
+        "verification": "unverified",
+    },
+}
+
+# --- 確認状態 ---------------------------------------------------------------
+VERIFICATIONS: dict[str, str] = {
+    "official": "公式確認",
+    "article": "記事のみ",
+    "fan_interpretation": "ファン解釈",
+    "needs_recheck": "要再確認",
+    "unverified": "未検証",
+}
+
+# 回答時の扱い。ツール返却値に同梱し、LLM側のプロンプトでこの文字列を根拠にさせる。
+VERIFICATION_HANDLING: dict[str, str] = {
+    "official": "作品内の事実として断定してよい。",
+    "article": "出典を添えて提示する。断定はしない。",
+    "fan_interpretation": "『そう解釈する感想がある』という形でのみ述べる。作品内の事実の根拠にはしない。",
+    "needs_recheck": "出典の本文が変化している。再確認するまで根拠に使わない。",
+    "unverified": "未照合。根拠に使わない。",
+}
+
+# 知識層の主張が取り得る状態
+CLAIM_STATUSES = ("active", "superseded", "retracted")
+
+# 主張どうしの関係
+LINK_TYPES = ("supersedes", "contradicts", "supports")
+
+# 知識層に入れてよい出典種別（ai_report は候補どまり）
+NON_CITABLE_KINDS = frozenset({"ai_report"})
+
+
+def kind_label(kind: str) -> str:
+    return SOURCE_KINDS.get(kind, {}).get("label", kind)
+
+
+def kind_priority(kind: str) -> int:
+    return SOURCE_KINDS.get(kind, {}).get("priority", 0)
+
+
+def default_verification(kind: str) -> str:
+    return SOURCE_KINDS.get(kind, {}).get("verification", "unverified")
+
+
+def default_refetch(kind: str) -> str:
+    return SOURCE_KINDS.get(kind, {}).get("refetch", "once")
+
+
+def verification_label(verification: str) -> str:
+    return VERIFICATIONS.get(verification, verification)
