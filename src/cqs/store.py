@@ -168,6 +168,16 @@ class WorkStore:
                 return segment
         return None
 
+    def set_source_extract(self, source_id: int, mode: str | None) -> None:
+        """本文をどこまで主張にするか（full / entity_only / None=種別に任せる）。"""
+        if mode not in (None, "full", "entity_only"):
+            raise StoreError(f"未知の取り込み方: {mode}")
+        if not self.get_source(source_id):
+            raise StoreError(f"出典が見つかりません: {source_id}")
+        self.conn.execute("UPDATE sources SET extract = ? WHERE id = ?", (mode, source_id))
+        self.conn.commit()
+        self.log("set_source_extract", {"source_id": source_id, "extract": mode})
+
     def set_source_segment(self, source_id: int, segment: str | None) -> None:
         if not self.get_source(source_id):
             raise StoreError(f"出典が見つかりません: {source_id}")
@@ -327,7 +337,7 @@ class WorkStore:
 
     def get_version(self, version_id: int) -> dict | None:
         r = self.conn.execute(
-            "SELECT v.*, s.url, s.kind, s.segment, s.title AS source_title, s.note AS source_note "
+            "SELECT v.*, s.url, s.kind, s.segment, s.extract, s.title AS source_title, s.note AS source_note "
             "FROM source_versions v JOIN sources s ON s.id = v.source_id WHERE v.id = ?",
             (version_id,),
         ).fetchone()
@@ -638,7 +648,7 @@ class WorkStore:
     _CLAIM_SELECT = (
         "SELECT c.id, c.text, c.verification, c.status, c.locator, c.note, c.offset, "
         "       c.created_at, c.updated_at, c.source_version_id, "
-        "       v.version_no, v.fetched_at, s.url, s.kind, s.segment, s.title AS source_title "
+        "       v.version_no, v.fetched_at, s.url, s.kind, s.segment, s.extract, s.title AS source_title "
         "FROM claims c "
         "LEFT JOIN source_versions v ON v.id = c.source_version_id "
         "LEFT JOIN sources s ON s.id = v.source_id "

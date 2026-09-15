@@ -156,3 +156,16 @@ def test_a_long_heading_is_not_mistaken_for_body(store):
     by_text = {c["text"]: c["section"] for c in ingest.propose_claims(store, v.version_id)}
     assert by_text["巴マミが魔女化した存在。"] == "おめかしの魔女 / キャンデロロ（Candeloro）"
     assert by_text["ゲーム版における暁美ほむらが魔女化した存在。"] == "此岸の魔女"
+
+
+def test_extract_mode_overrides_the_kind_default(store):
+    """監督や声優の記事は Wikipedia でも作品そのものの資料ではない。"""
+    store.ensure_entity("かぐや")
+    text = "映画『超かぐや姫！』ではかぐやを演じた。\n\n別の作品にも主演として出演している。\n"
+    sid = store.add_source(url="https://ja.wikipedia.org/wiki/voice", kind="wiki_index", title="声優")
+    v = store.add_version(sid, text=text, title="声優")
+    assert len(ingest.propose_claims(store, v.version_id)) == 2
+
+    store.set_source_extract(sid, "entity_only")
+    got = [c["text"] for c in ingest.propose_claims(store, v.version_id)]
+    assert got == ["映画『超かぐや姫！』ではかぐやを演じた。"]

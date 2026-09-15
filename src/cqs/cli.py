@@ -434,6 +434,13 @@ def cmd_entity(args: argparse.Namespace) -> None:
                 print(f"{r['name']}  同じ主張に {r['shared']} 件")
 
 
+def cmd_source_extract(args: argparse.Namespace) -> None:
+    with _store(args) as st:
+        mode = None if args.mode == "auto" else args.mode
+        st.set_source_extract(args.source_id, mode)
+        _out(args, {"ok": True}, f"出典 {args.source_id} の取り込み方を {args.mode} にしました")
+
+
 def cmd_segment(args: argparse.Namespace) -> None:
     with _store(args) as st:
         if args.segment_command == "rule":
@@ -658,6 +665,12 @@ def build_parser() -> argparse.ArgumentParser:
     e3 = esub.add_parser("related")
     e3.add_argument("name")
     e3.set_defaults(func=cmd_entity)
+
+    sp = sub.add_parser("source-extract", help="その出典の本文をどこまで主張にするか")
+    sp.add_argument("source_id", type=int)
+    sp.add_argument("mode", choices=["full", "entity_only", "auto"],
+                    help="full=人物名の無い文も採る / entity_only=触れる文だけ / auto=出典種別に任せる")
+    sp.set_defaults(func=cmd_source_extract)
 
     sp = sub.add_parser("segment", help="出典がどの作品についての記述かを分ける（区分）")
     gsub = sp.add_subparsers(dest="segment_command")

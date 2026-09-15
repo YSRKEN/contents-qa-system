@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # trigram トークナイザを使う。日本語は空白で区切られないため、
 # 既定の unicode61 では語をまたいだ検索がほぼ効かない。
@@ -169,6 +169,10 @@ _ADDED_COLUMNS = [
     ("sources", "segment", "TEXT"),
     # 原文中での位置。主張IDは登録順でしかないので、取り込み直すと並び順が崩れる
     ("claims", "offset", "INTEGER"),
+    # 本文をどこまで主張にするか。full=人物名の無い文も採る / entity_only=触れる文だけ。
+    # 未指定なら出典種別から決める（constants.REFERENCE_KINDS）。
+    # 監督や声優の記事のように、作品そのものではなく作品に言及しているだけの資料で使う。
+    ("sources", "extract", "TEXT"),
 ]
 
 

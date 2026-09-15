@@ -5,7 +5,11 @@ from cqs import config
 from cqs.constants import VERIFICATION_HANDLING, SOURCE_KINDS
 
 OUT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "data.js")
+# 原文の本文は全体の6割を占める。ページを開くのに要るのは知識層だけなので、
+# 本文は別ファイルにして後から読み込ませる（携帯で最初の表示が重くならないように）。
+TEXT_OUT = OUT.with_name("text.js")
 works = []
+texts: dict[str, str] = {}
 for w in config.list_works():
     if w.get("error"):
         continue
@@ -20,7 +24,9 @@ for w in config.list_works():
             if not v: continue
             sources.append({"sv":int(v["id"]),"id":s["id"],"k":s["kind"],"u":s["url"] or "",
                             "ti":s["title"] or "","at":v["fetched_at"],"n":v["version_no"],"g":s["segment"] or "",
-                            "tx":st.source_excerpt(int(v["id"]), length=10**7)["excerpt"]})
+                            })
+            texts[f'{st.meta.get("slug")}/{int(v["id"])}'] = \
+                st.source_excerpt(int(v["id"]), length=10**7)["excerpt"]
         works.append({
             "work": {"title": st.meta.get("title"), "slug": st.meta.get("slug"),
                      "note": st.meta.get("note", "")},
@@ -37,4 +43,8 @@ data = {"kinds": {k: v["label"] for k, v in SOURCE_KINDS.items()},
         "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
 js = "window.CQS_DATA=" + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";"
 OUT.write_text(js, encoding="utf-8")
+tjs = ("window.CQS_TEXT=" + json.dumps(texts, ensure_ascii=False, separators=(",", ":")) + ";"
+       + "window.dispatchEvent(new Event('cqs-text'));")
+TEXT_OUT.write_text(tjs, encoding="utf-8")
 print(f"{OUT}: {round(len(js.encode())/1024)} KB / {len(works)}作品")
+print(f"{TEXT_OUT}: {round(len(tjs.encode())/1024)} KB / 原文 {len(texts)}件")

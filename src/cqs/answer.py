@@ -195,6 +195,31 @@ def _fetch_claims(store: WorkStore, ids: Sequence[int]) -> list[dict]:
     ]
 
 
+def _shingles(text: str) -> set[str]:
+    t = textutil.flatten(text)
+    return {t[i:i + 3] for i in range(max(len(t) - 2, 1))}
+
+
+def _near_duplicate(a: set[str], b: set[str], threshold: float = 0.65) -> bool:
+    """作品紹介の定型文（「願いを叶えた代償として…」）は多くの出典に同じ形で載る。
+
+    出典が増えるほど、同じ内容の主張が枠を食い潰す。文字3組の重なりで近さを測り、
+    近すぎるものは1件だけ残す。出典が違っても、読み手に伝わる内容は同じなので。
+
+    重なりは「短いほうのうち何割が相手に含まれるか」で測る。同じ定型文でも
+    前後に足す言葉は出典ごとに違うため、両方の長さで割ると（Jaccard）
+    見た目には同じ文でも0.4程度にしかならず、拾えない。
+    """
+    if not a or not b:
+        return False
+    # 短い文どうしは、違う内容でも形が同じになる（「巴マミが魔女化した存在。」と
+    # 「佐倉杏子が魔女化した存在。」）。違うのは名前だけで、その名前こそが情報なので、
+    # 重複として潰さない。定型文はもっと長い。
+    if min(len(a), len(b)) < 30:
+        return False
+    return len(a & b) / min(len(a), len(b)) >= threshold
+
+
 def split_section(text: str) -> tuple[str, str]:
     """主張は「節見出し: 本文」の形で入っている。見出しと本文に分ける。"""
     head, sep, body = text.partition(": ")
@@ -334,6 +359,7 @@ def retrieve(
     # 数え上げの質問で、最初の1人分だけで枠を使い切る。深さは後段の節ごと切り出しが担う。
     per_section = 3
     used_sections: dict[tuple[int, str], int] = {}
+    head_shingles: list[set[str]] = []
     for _, c in ranked:
         if len(claims) >= head_budget:
             break
@@ -341,7 +367,13 @@ def retrieve(
         if key[1]:
             if used_sections.get(key, 0) >= per_section:
                 continue
+        sh = _shingles(split_section(c["text"])[1])
+        if any(_near_duplicate(sh, other) for other in head_shingles):
+            seen.add(c["id"])     # 後段でも拾い直さない
+            continue
+        if key[1]:
             used_sections[key] = used_sections.get(key, 0) + 1
+        head_shingles.append(sh)
         seen.add(c["id"])
         claims.append(c)
     for c in runs:
@@ -351,9 +383,15 @@ def retrieve(
     for _, c in ranked:
         if len(claims) >= max_claims:
             break
-        if c["id"] not in seen:
+        if c["id"] in seen:
+            continue
+        sh = _shingles(split_section(c["text"])[1])
+        if any(_near_duplicate(sh, other) for other in head_shingles):
             seen.add(c["id"])
-            claims.append(c)
+            continue
+        head_shingles.append(sh)
+        seen.add(c["id"])
+        claims.append(c)
 
     # 当たりが少ない質問では、材料が数件で終わってしまう。人が資料を読むときと同じで、
     # 当たった文の前後には答えの残りが書かれていることが多いので、空いている分だけ足す。

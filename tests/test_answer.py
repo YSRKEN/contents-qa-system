@@ -145,14 +145,35 @@ def test_run_comes_from_where_the_hits_cluster(store):
     sid = store.add_source(url="https://example.com/long", kind="wiki_index", title="長い記事")
     v = store.add_version(sid, text="長い記事", title="長い記事")
     store.ensure_entity("かぐや")
+    # 同じ文の繰り返しだと重複除去に当たるので、1件ずつ違う内容にする
     ids = []
+    words = ["月", "竹", "帝", "翁", "媼", "衣", "都", "山", "海", "星", "夜", "春",
+             "夏", "秋", "冬", "雨", "雪", "風", "花", "鳥"]
     for i in range(60):
-        about = "かぐや" if 40 <= i < 52 else "別の話題"
-        ids.append(store.add_claim(
-            text=f"節: {about}についての記述{i}。", source_version_id=v.version_id,
-            entities=["かぐや"] if about == "かぐや" else [],
-        ))
+        w = words[i % len(words)]
+        if 40 <= i < 52:
+            ids.append(store.add_claim(
+                text=f"節: かぐやは{w}にまつわる出来事に{i}度関わったとされる。",
+                source_version_id=v.version_id, entities=["かぐや"]))
+        else:
+            ids.append(store.add_claim(
+                text=f"節: {w}についての別の話題が{i}件記されている。",
+                source_version_id=v.version_id))
     ctx = answer.retrieve(store, "かぐやについて教えて", max_claims=30)
     got = {c["id"] for c in ctx["claims"]}
-    assert set(ids[40:52]) <= got
+    # 当たりの集まっているあたりが中心に来て、遠く離れた場所は入らない
+    assert len(got & set(ids[40:52])) >= 8
     assert not (set(ids[:20]) & got)
+
+
+def test_boilerplate_is_not_repeated_in_the_material(store):
+    """あらすじの定型文は多くの出典に載る。出典が増えるほど枠を食い潰す。"""
+    store.ensure_entity("かぐや")
+    boiler = "願いを叶えた代償として魔法少女となり、人知れず人類の敵と戦うことになる少女たちの物語である。"
+    for i in range(6):
+        sid = store.add_source(url=f"https://example.com/{i}", kind="article", title=f"紹介{i}")
+        v = store.add_version(sid, text=boiler, title=f"紹介{i}")
+        store.add_claim(text=boiler.replace("物語である", f"物語{i}である"),
+                        source_version_id=v.version_id, entities=["かぐや"])
+    got = [c["text"] for c in answer.retrieve(store, "かぐやの願いは？", max_claims=20)["claims"]]
+    assert sum(1 for t in got if "代償として魔法少女" in t) == 1

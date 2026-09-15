@@ -218,9 +218,16 @@ def _surface_map(store: WorkStore, entities: Sequence[str]) -> dict[str, str]:
 
 
 def _default_require_entity(store: WorkStore, source_version_id: int) -> bool:
-    """人物名を含まない文まで採るかどうかは、出典種別で決める。"""
+    """人物名を含まない文まで採るかどうか。出典ごとの指定があればそれに従う。"""
     v = store.get_version(source_version_id)
-    return not is_reference_kind(v["kind"] if v else None)
+    if not v:
+        return True
+    mode = v["extract"] if "extract" in v.keys() else None
+    if mode == "full":
+        return False
+    if mode == "entity_only":
+        return True
+    return not is_reference_kind(v["kind"])
 
 
 def propose_claims(
