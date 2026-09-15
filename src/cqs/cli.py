@@ -33,6 +33,15 @@ def _store(args: argparse.Namespace) -> WorkStore:
     return config.open_work(args.work)
 
 
+def _robots_setting(args: argparse.Namespace) -> bool | None:
+    """robots.txt を確認するかどうか。指定が無ければ環境変数の既定に委ねる。"""
+    if getattr(args, "robots", False):
+        return True
+    if getattr(args, "no_robots", False):
+        return False
+    return None
+
+
 def _read_input(path: str | None, text: str | None) -> str:
     if text:
         return text
@@ -101,7 +110,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
             try:
                 r = ingest.ingest_url(
                     st, url, kind=args.kind, title=args.title,
-                    respect_robots=not args.no_robots,
+                    respect_robots=_robots_setting(args),
                 )
             except Exception as e:
                 r = {"url": url, "error": str(e)}
@@ -175,7 +184,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
             candidate_ids=args.id or None,
             limit=args.limit,
             promote_threshold=args.promote,
-            respect_robots=not args.no_robots,
+            respect_robots=_robots_setting(args),
         )
         if args.json:
             _out(args, rows)
@@ -369,7 +378,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("urls", nargs="+")
     sp.add_argument("--kind", choices=sorted(SOURCE_KINDS))
     sp.add_argument("--title")
-    sp.add_argument("--no-robots", action="store_true", help="robots.txt を確認しない")
+    sp.add_argument("--no-robots", action="store_true", help="robots.txt を確認しない（既定）")
+    sp.add_argument("--robots", action="store_true", help="robots.txt を確認し、拒否されたURLは取得しない")
     sp.set_defaults(func=cmd_fetch)
 
     sp = sub.add_parser("refetch", help="登録済みURLを再取得して版を積む")
@@ -402,6 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=10)
     sp.add_argument("--promote", type=float, metavar="0.0-1.0", help="この一致率以上を知識層へ登録する")
     sp.add_argument("--no-robots", action="store_true")
+    sp.add_argument("--robots", action="store_true", help="robots.txt を確認する")
     sp.set_defaults(func=cmd_verify)
 
     sp = sub.add_parser("sources", help="出典一覧")

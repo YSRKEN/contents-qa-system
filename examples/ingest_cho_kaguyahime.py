@@ -40,6 +40,8 @@ KIND_RULES = [
     ("eiga.com", "article"),
     ("nijimen", "article"),
     ("twinengine.jp", "article"),
+    ("denfaminicogamer.jp", "article"),
+    ("natalie.mu", "article"),
 ]
 
 URLS = [
@@ -48,6 +50,7 @@ URLS = [
     "https://www.cho-kaguyahime.com/news/",
     "https://www.cho-kaguyahime.com/music/",
     "https://www.cho-kaguyahime.com/movie/",
+    "https://www.cho-kaguyahime.com/theater/",
     # インタビュー・記事（1回取得で確定）
     "https://mantan-web.jp/article/20260124dog00m200003000c.html",
     "https://mantan-web.jp/article/20260129dog00m200001000c.html",
@@ -55,6 +58,18 @@ URLS = [
     "https://www.animatetimes.com/news/details.php?id=1768959910",
     "https://www.buzzfeed.com/jp/munenoriumeki/cho-kaguyahime-interview",
     "https://eiga.com/movie/105011/",
+    "https://www.gamer.ne.jp/news/202602190031/",
+    "https://nijimen.kusuguru.co.jp/topics/600120",
+    "https://news.denfaminicogamer.jp/news/2606192x",
+    # Wiki（探索用インデックス。主張の根拠にはしない）
+    "https://ja.wikipedia.org/wiki/%E8%B6%85%E3%81%8B%E3%81%90%E3%82%84%E5%A7%AB!",
+    # 公式SNS（FxTwitter 経由。タイムラインは辿れないので投稿URLを個別に指定する）
+    "https://x.com/Cho_KaguyaHime",
+    "https://x.com/Cho_KaguyaHime/status/2077362794022785400",
+    "https://x.com/Cho_KaguyaHime/status/2046968215088369935",
+    "https://x.com/Cho_KaguyaHime/status/2063123720097468464",
+    "https://x.com/Cho_KaguyaHime/status/2019380735870697734",
+    "https://x.com/Cho_KaguyaHime/status/2033831030550106371",
     # 感想note（ファン解釈として扱う）
     "https://note.com/zenjituloku/n/n705f05631a44",
     "https://note.com/kohatazuke/n/ne448c35ab2f9",
@@ -82,6 +97,7 @@ ENTITIES: list[tuple[str, str, list[str]]] = [
     ("山下清悟", "person", []),
     ("スタジオコロリド", "organization", []),
     ("スタジオクロマト", "organization", []),
+    ("超かぐや姫！", "work", ["超かぐや姫", "超かぐや姫!", "CosmicPrincessKaguya"]),
 ]
 
 # 公式サイトの登場人物欄: [画像: 名前] → 英字表記 → CV → PROFILE → プロフィール本文
@@ -178,7 +194,7 @@ def main() -> int:
         print(f"エンティティ {len(ENTITIES)} 件を登録しました")
 
         official_top = None
-        secondary: list[int] = []
+        secondary: list[tuple[int, str]] = []
         if args.offline:
             for s in store.list_sources():
                 v = store.latest_version(s["id"])
@@ -186,8 +202,8 @@ def main() -> int:
                     continue
                 if s["url"] == URLS[0]:
                     official_top = int(v["id"])
-                elif s["kind"] in ("interview", "article", "fan_note"):
-                    secondary.append(int(v["id"]))
+                elif s["kind"] in ("interview", "article", "fan_note", "official_sns"):
+                    secondary.append((int(v["id"]), s["kind"]))
         else:
             for url in URLS:
                 try:
@@ -198,8 +214,8 @@ def main() -> int:
                 print(f"  ○ [{r['kind_label']}] {r['text_length']:>6}字 v{r['version_no']} {url}")
                 if url == URLS[0]:
                     official_top = r["source_version_id"]
-                elif r["kind"] in ("interview", "article", "fan_note"):
-                    secondary.append(r["source_version_id"])
+                elif r["kind"] in ("interview", "article", "fan_note", "official_sns"):
+                    secondary.append((r["source_version_id"], r["kind"]))
 
         if official_top is None:
             print("公式トップページを取得できていないため、知識層の構築を中止します。")
@@ -213,12 +229,17 @@ def main() -> int:
             n = ingest_story_section(store, official_top)
             print(f"イントロダクション・あらすじから {n} 件の主張を登録しました")
             total = 0
-            for svid in secondary:
+            for svid, kind in secondary:
                 try:
-                    total += len(ingest.register_proposed(store, svid, limit=200))
+                    # 公式SNSの告知は人物名が出ないことが多いので、エンティティ必須を外す
+                    total += len(
+                        ingest.register_proposed(
+                            store, svid, limit=200, require_entity=(kind != "official_sns")
+                        )
+                    )
                 except StoreError as e:
                     print(f"  × source_version {svid}: {e}")
-            print(f"インタビュー・記事・感想noteから {total} 件の主張を登録しました")
+            print(f"二次情報・公式SNSから {total} 件の主張を登録しました")
 
         s = store.stats()
         print(

@@ -19,7 +19,7 @@ def ingest_url(
     kind: str | None = None,
     title: str | None = None,
     note: str | None = None,
-    respect_robots: bool = True,
+    respect_robots: bool | None = None,
 ) -> dict:
     """URLを取得して原文層に版を積む。既存URLなら版を追加する。"""
     existing = store.find_source_by_url(url)
@@ -120,7 +120,7 @@ def verify_candidates(
     candidate_ids: Iterable[int] | None = None,
     limit: int = 20,
     promote_threshold: float | None = None,
-    respect_robots: bool = True,
+    respect_robots: bool | None = None,
 ) -> list[dict]:
     """候補のURLを実際に取得し、主張がそのページに書かれているか照合する。
 
@@ -208,6 +208,7 @@ def propose_claims(
     *,
     entities: Sequence[str] = (),
     limit: int = 50,
+    require_entity: bool = True,
 ) -> list[dict]:
     """ある版の本文から主張候補を切り出す（登録はしない）。
 
@@ -217,10 +218,15 @@ def propose_claims(
     if not v:
         raise StoreError(f"出典版が見つかりません: {source_version_id}")
     surfaces = _surface_map(store, list(entities))
-    cands = extract.dedupe(extract.candidate_sentences(v["excerpt"], entities=list(surfaces)))
+    # require_entity=False のときはエンティティで絞らず、文として成立する行をすべて出す。
+    # 公式SNSの告知のように、人物名が出ないが作品の事実を含む出典で使う。
+    cands = extract.dedupe(
+        extract.candidate_sentences(v["excerpt"], entities=list(surfaces) if require_entity else ())
+    )
     for c in cands:
-        canonical = {surfaces[s] for s in c["entities"]}
-        c["entities"] = sorted(canonical)
+        # entities で絞らなかった場合、文中の表記を改めて拾って正規名に直す
+        hits = c["entities"] or [k for k in surfaces if k in c["text"]]
+        c["entities"] = sorted({surfaces[k] for k in hits})
     return cands[:limit]
 
 
@@ -237,7 +243,9 @@ def register_proposed(
     確認状態は出典種別から機械的に決まる（公式サイト→公式確認、感想note→ファン解釈）。
     locator には抽出元の文をそのまま入れ、後から原文と突き合わせられるようにする。
     """
-    cands = propose_claims(store, source_version_id, entities=entities, limit=limit)
+    cands = propose_claims(
+        store, source_version_id, entities=entities, limit=limit, require_entity=require_entity
+    )
     ids: list[int] = []
     for c in cands:
         if require_entity and not c["entities"]:
