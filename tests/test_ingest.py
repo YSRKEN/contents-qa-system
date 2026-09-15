@@ -64,3 +64,12 @@ def test_nested_headings_are_joined(store):
     r = ingest.ingest_text(store, text, kind="wiki_index", title="Wiki")
     ids = ingest.register_proposed(store, r["source_version_id"], require_entity=False)
     assert store.get_claim(ids[0])["text"] == "かぐや / 声 - 夏吉ゆうこ: 月からやってきた謎の少女である。"
+
+
+def test_entity_matching_ignores_spaces_in_names(store):
+    """出典によって「諌山真実」「諌山 真実」と表記が割れるので、空白は無視して拾う。"""
+    store.ensure_entity("諌山真実", kind="character")
+    text = "諌山 真実（いさやま まみ）\n「まみまみ」の名前でグルメインフルエンサーとして活動している。\n"
+    r = ingest.ingest_text(store, text, kind="wiki_index", title="Wiki")
+    ids = ingest.register_proposed(store, r["source_version_id"], require_entity=False)
+    assert any("諌山真実" in store.get_claim(i)["entities"] for i in ids)

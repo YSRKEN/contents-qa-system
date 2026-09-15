@@ -66,6 +66,7 @@ cqs -w 作品名 propose 1                             # その版から主張�
 cqs -w 作品名 claim add --text "…" --source-version 1 --entity "キャラ名"
 
 cqs -w 作品名 source-kind 3 fan_chronicle            # 取り込み後に出典種別を直す
+cqs -w 作品名 entity coverage --kind character      # どのエンティティの情報が薄いか見る
 cqs -w 作品名 images list 42                        # 記事に貼られた表・図の画像を一覧
 cqs -w 作品名 images transcribe 42                  # 画像をClaudeに読み取らせ原文層へ（APIキーが要る）
 cqs -w 作品名 images save 42 --out ./images         # キーが無ければ保存して自分で読む

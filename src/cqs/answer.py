@@ -10,7 +10,7 @@ import math
 import os
 from typing import Any, Sequence
 
-from . import report
+from . import report, textutil
 from .constants import VERIFICATION_HANDLING, verification_label
 from .store import WorkStore
 
@@ -39,10 +39,11 @@ def _handling_block() -> str:
 
 def mentioned_entities(store: WorkStore, question: str) -> list[str]:
     """質問文に含まれる登録済みエンティティ名（別名含む）を拾う。"""
+    flat = textutil.flatten(question)
     hits: list[str] = []
     for e in store.list_entities():
         names = [e["name"], *e.get("aliases", [])]
-        if any(n and n in question for n in names):
+        if any(n and (n in question or textutil.flatten(n) in flat) for n in names):
             hits.append(e["name"])
     return hits
 

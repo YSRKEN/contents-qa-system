@@ -452,6 +452,28 @@ class WorkStore:
             out.append(d)
         return out
 
+    def entity_coverage(self) -> list[dict]:
+        """エンティティごとに、主張が何件・何種類の出典から来ているかを返す。
+
+        どのキャラクターの情報が薄いかは、件数だけでなく
+        「出典が公式サイト1つしかない」といった偏りに出る。
+        """
+        rows = self.conn.execute(
+            "SELECT e.id, e.name, e.kind, "
+            "       COUNT(DISTINCT c.id) AS claims, "
+            "       COUNT(DISTINCT v.source_id) AS sources, "
+            "       SUM(CASE WHEN c.verification='official' THEN 1 ELSE 0 END) AS official, "
+            "       SUM(CASE WHEN c.verification='article' THEN 1 ELSE 0 END) AS article, "
+            "       SUM(CASE WHEN c.verification='secondhand' THEN 1 ELSE 0 END) AS secondhand, "
+            "       SUM(CASE WHEN c.verification='fan_interpretation' THEN 1 ELSE 0 END) AS fan "
+            "FROM entities e "
+            "LEFT JOIN claim_entities ce ON ce.entity_id = e.id "
+            "LEFT JOIN claims c ON c.id = ce.claim_id AND c.status='active' "
+            "LEFT JOIN source_versions v ON v.id = c.source_version_id "
+            "GROUP BY e.id ORDER BY claims DESC, e.name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def related_entities(self, name: str, *, limit: int = 20) -> list[dict]:
         """同じ主張に一緒に現れるエンティティを数える（交流関係の下敷き）。"""
         e = self.resolve_entity(name)

@@ -410,6 +410,21 @@ def cmd_entity(args: argparse.Namespace) -> None:
                 al = f"  別名: {', '.join(e['aliases'])}" if e["aliases"] else ""
                 print(f"[{e['id']}] {e['name']}  ({e['kind'] or '-'})  主張{e['claims']}件{al}")
             print(f"{len(rows)}件")
+        elif args.entity_command == "coverage":
+            rows = st.entity_coverage()
+            if args.kind:
+                rows = [r for r in rows if r["kind"] == args.kind]
+            if args.json:
+                _out(args, rows)
+                return
+            print(f"{'名前':<16}{'主張':>5}{'出典':>5}{'公式':>5}{'記事':>5}{'伝聞':>5}{'感想':>5}")
+            for r in rows:
+                print(f"{r['name']:<16}{r['claims'] or 0:>5}{r['sources'] or 0:>5}"
+                      f"{r['official'] or 0:>5}{r['article'] or 0:>5}"
+                      f"{r['secondhand'] or 0:>5}{r['fan'] or 0:>5}")
+            thin = [r for r in rows if (r["sources"] or 0) <= 2]
+            if thin:
+                print(f"\n出典が2つ以下のエンティティ: {', '.join(r['name'] for r in thin)}")
         elif args.entity_command == "related":
             rows = st.related_entities(args.name)
             if args.json:
@@ -613,6 +628,9 @@ def build_parser() -> argparse.ArgumentParser:
     e1.set_defaults(func=cmd_entity)
     e2 = esub.add_parser("list")
     e2.set_defaults(func=cmd_entity)
+    e4 = esub.add_parser("coverage", help="エンティティごとの情報の厚みを見る")
+    e4.add_argument("--kind", help="character などで絞る")
+    e4.set_defaults(func=cmd_entity)
     e3 = esub.add_parser("related")
     e3.add_argument("name")
     e3.set_defaults(func=cmd_entity)

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence
 
-from . import extract, fetch, report
+from . import extract, fetch, report, textutil
 from .constants import kind_label
 from .store import StoreError, WorkStore
 
@@ -225,12 +225,18 @@ def propose_claims(
     )
     for c in cands:
         # entities で絞らなかった場合、文中の表記を改めて拾って正規名に直す
-        hits = c["entities"] or [k for k in surfaces if k in c["text"]]
+        flat_text = textutil.flatten(c["text"])
+        hits = c["entities"] or [
+            k for k in surfaces if k in c["text"] or textutil.flatten(k) in flat_text
+        ]
         c["entities"] = sorted({surfaces[k] for k in hits})
         # 節見出しがあれば、それも対象エンティティの手がかりにする
         if c.get("section"):
+            flat_section = textutil.flatten(c["section"])
             c["entities"] = sorted(
-                set(c["entities"]) | {surfaces[k] for k in surfaces if k in c["section"]}
+                set(c["entities"])
+                | {surfaces[k] for k in surfaces
+                   if k in c["section"] or textutil.flatten(k) in flat_section}
             )
     return cands[:limit]
 

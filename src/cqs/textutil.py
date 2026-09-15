@@ -190,6 +190,18 @@ def clean_text(text: str) -> str:
     return "\n".join(out).strip()
 
 
+_SPACES = re.compile(r"[\s\u3000]+")
+
+
+def flatten(text: str) -> str:
+    """空白をすべて取り除く。
+
+    日本語の人名は「諌山真実」と「諌山 真実」のように、姓名の間の空白が
+    出典によって違う。名前を本文から拾うときは、両方を同じものとして扱う。
+    """
+    return _SPACES.sub("", text)
+
+
 def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

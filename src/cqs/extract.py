@@ -124,7 +124,8 @@ def candidate_sentences(
                 continue
             if is_item and (not _HAS_JA.search(s) or _IMAGE_LINE.match(s)):
                 continue
-            hit = [e for e in entities if e and e in s]
+            flat = textutil.flatten(s)
+            hit = [e for e in entities if e and (e in s or textutil.flatten(e) in flat)]
             if entities and not hit:
                 continue
             out.append({
