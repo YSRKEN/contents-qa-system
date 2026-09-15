@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from typing import Any, Sequence
 
 from . import report, textutil
@@ -55,14 +56,55 @@ _VERIF_RANK = {"official": 0, "article": 1, "secondhand": 2, "fan_interpretation
                "needs_recheck": 4, "unverified": 5}
 
 
+# 漢字の連なりと、その直後の送り仮名1文字まで。カタカナ・英数は2文字以上。
+_Q_TOKEN = re.compile(r"([一-龥々]+)([ぁ-ん]?)|([ァ-ヴー]{2,}|[A-Za-z0-9]{2,})")
+# 語の一部ではなく助詞。「月に」「関係は」を検索語にしても本文には当たらない
+_PARTICLES = frozenset("はがをにへもので")
+# 質問の言い回しであって、作品について何も言っていない語
+_Q_STOP = frozenset({
+    "何", "誰", "教", "教え", "詳", "詳し", "説明", "箇条", "箇条書",
+    "書", "書い", "述べ", "答え", "一体", "具体", "以下", "上記",
+})
+
+
 def question_terms(question: str) -> list[str]:
     """質問文から検索語を取り出す。
 
     質問文をそのまま全文検索に渡すと、文全体が1つのフレーズとして扱われ、
     ほぼ必ず0件になる。漢字・カタカナ・英数の連なりを語として拾う
     （助詞はひらがななので自然に落ちる）。
+
+    漢字2文字以上だけを語とすると、日本語の内容語の多くが消える。
+    「願い」「月」「帰った」「叶えた」はいずれも漢字1文字＋送り仮名で、
+    「まどかはどんな願いを叶えた？」からは検索語が1つも取れなかった。
+    漢字の連なりと、それに送り仮名1文字を足した形の両方を出し、
+    どちらが本文の表記に合うかは重み付け（term_weight）に任せる。
+    実在しない語は出現数0になり、useful の絞り込みで自然に落ちる。
     """
-    return [t for t in report.claim_tokens(question) if len(t) >= 2]
+    out: list[str] = []
+
+    def add(t: str) -> None:
+        if t and t not in _Q_STOP and t not in out:
+            out.append(t)
+
+    for kanji, okuri, other in _Q_TOKEN.findall(textutil.normalize_query(question)):
+        if not kanji:
+            add(other)
+            continue
+        for run in kanji.split("何"):      # 「全何話」→「全」「話」
+            add(run)
+            # 送り仮名を足すのは漢字1文字の語だけ。2文字以上はそれで語として完結して
+            # おり、後ろに続くのはたいてい助詞（「関係は」「時系列に」）になる。
+            if len(run) == 1 and okuri and okuri not in _PARTICLES and run == kanji.split("何")[-1]:
+                add(run + okuri)
+    return out
+
+
+def term_weight_for(df: int, total: int) -> float:
+    """出現件数から重みを出す。多くの主張に当たるものほど軽い。"""
+    if df <= 0 or total <= 1:
+        return 0.0
+    return round(8.0 * math.log(max(total / df, 1.0)) / math.log(total), 2)
 
 
 def term_weight(store: WorkStore, term: str, total: int) -> float:
@@ -71,10 +113,7 @@ def term_weight(store: WorkStore, term: str, total: int) -> float:
     「作品」のような語は数百件に当たるため、そのままでは点数を支配してしまい、
     「時系列」のような効く語がかき消される。
     """
-    df = store.count_claims(term)
-    if df <= 0 or total <= 1:
-        return 0.0
-    return round(8.0 * math.log(max(total / df, 1.0)) / math.log(total), 2)
+    return term_weight_for(store.count_claims(term), total)
 
 
 def _best_window(positions: Sequence[int], hits: dict[int, float], width: int) -> tuple[int, int, float]:
@@ -169,15 +208,23 @@ def retrieve(
             return points
         return points * 0.25
 
-    alias_map = {e["name"]: [e["name"], *e.get("aliases", [])] for e in store.list_entities()}
+    total = store.stats()["claims_active"]
+    entity_rows = store.list_entities()
+    alias_map = {e["name"]: [e["name"], *e.get("aliases", [])] for e in entity_rows}
+    # 人物にも語と同じ重み付けをする。主人公は数百件の主張に出てくるので、
+    # 名前が一致してもほとんど何も絞り込めない。一方その質問の鍵になる語
+    # （「願」157件）のほうが絞り込める。固定点だと主人公の名前が鍵の語を上回り、
+    # 答えそのものの主張が順位の外へ押し出されていた。
+    entity_weight = {
+        e["name"]: max(term_weight_for(int(e["claims"] or 0), total), 1.0) for e in entity_rows
+    }
     for name in ents:
         names = alias_map.get(name, [name])
         # エンティティ一致は索引を引くだけで安いので、打ち切らずに全部見る。
         # ここを max_claims の数倍で打ち切ると、主人公のように何百件も付く人物では
         # 打ち切りの内側に入った出典だけが候補になり、出典の選び方が偶然で決まる。
         for c in store.search_claims(entity=name, limit=100000):
-            bump(c, matched_weight(c, names, 4))
-    total = store.stats()["claims_active"]
+            bump(c, matched_weight(c, names, entity_weight.get(name, 4.0)))
     weights = {t: term_weight(store, t, total) for t in terms}
     # ほぼ全件に当たる語は点数を支配するだけなので落とす。ただし全部落ちると
     # 何も返らなくなるので、その場合は重みの大きい順に2語だけ残す。
@@ -253,6 +300,27 @@ def retrieve(
         if c["id"] not in seen:
             seen.add(c["id"])
             claims.append(c)
+
+    # 当たりが少ない質問では、材料が数件で終わってしまう。人が資料を読むときと同じで、
+    # 当たった文の前後には答えの残りが書かれていることが多いので、空いている分だけ足す。
+    if len(claims) < max_claims // 2:
+        index = {sv: {cid: i for i, cid in enumerate(ids)} for sv, ids in in_order.items()}
+        extra: list[int] = []
+        for _, c in ranked:
+            sv = c["source_version_id"]
+            if not sv:
+                continue
+            ids = in_order.get(int(sv), [])
+            i = index.get(int(sv), {}).get(c["id"])
+            if i is None:
+                continue
+            for j in range(max(0, i - 3), min(len(ids), i + 4)):
+                if ids[j] not in seen:
+                    seen.add(ids[j])
+                    extra.append(ids[j])
+            if len(claims) + len(extra) >= max_claims:
+                break
+        claims.extend(_fetch_claims(store, extra[: max_claims - len(claims)]))
 
     # --- 3. 矛盾する相手は必ず一緒に入れる（片方だけでは「両方を並べる」が守れない）
     for c in list(claims):

@@ -23,15 +23,15 @@ def test_answer_without_api_key_returns_prompt_only(store, monkeypatch):
 
 
 def test_retrieve_finds_claims_without_entities_via_terms(store):
-    """人物名を含まない記述（日付など）も、検索語を足せば拾えること。"""
+    """人物名を含まない記述（日付など）も拾えること。"""
     sid = store.add_source(url="https://blog.example/t", kind="fan_chronicle", title="時系列")
     v = store.add_version(sid, text="2030年の9/12はリアルでも満月です。")
     store.ensure_entity("かぐや")
     store.add_claim(text="2030年の9/12はリアルでも満月です。", source_version_id=v.version_id)
     store.add_claim(text="かぐや: 月からやってきた少女。", source_version_id=v.version_id, entities=["かぐや"])
 
-    plain = answer.retrieve(store, "かぐやが月に帰った日付は？")
-    assert "2030年の9/12はリアルでも満月です。" not in [c["text"] for c in plain["claims"]]
+    got = [c["text"] for c in answer.retrieve(store, "かぐやが月に帰った日付は？")["claims"]]
+    assert "2030年の9/12はリアルでも満月です。" in got
 
     with_terms = answer.retrieve(store, "かぐやが月に帰った日付は？", extra_terms=["満月"])
     assert "2030年の9/12はリアルでも満月です。" in [c["text"] for c in with_terms["claims"]]
@@ -39,7 +39,33 @@ def test_retrieve_finds_claims_without_entities_via_terms(store):
 
 def test_question_terms_splits_a_sentence(store):
     """質問文をまるごと全文検索に渡すと必ず0件になる。語に割ること。"""
-    assert set(answer.question_terms("作品内の時系列を箇条書きで書いて")) == {"箇条書", "時系列", "作品内"}
+    assert set(answer.question_terms("作品内の時系列を書いて")) == {"時系列", "作品内"}
+
+
+def test_question_terms_keeps_single_kanji_stems(store):
+    """漢字1文字＋送り仮名の語を落とすと、内容語が1つも残らない質問がある。"""
+    assert set(answer.question_terms("まどかはどんな願いを叶えた？")) == {"願", "願い", "叶", "叶え"}
+    # 助詞は送り仮名ではないので足さない（「月に」では本文に当たらない）
+    assert "月に" not in answer.question_terms("かぐやが月に帰った日付は？")
+    assert "月" in answer.question_terms("かぐやが月に帰った日付は？")
+    # 質問の言い回しは検索語にしない
+    assert "教え" not in answer.question_terms("この作品について詳しく教えて")
+    # 「全何話」は語ではないので、疑問詞で切る
+    assert set(answer.question_terms("この作品は全何話？")) == {"作品", "全", "話"}
+
+
+def test_thin_results_are_padded_with_surrounding_claims(store):
+    """当たりが数件しかない質問では、その前後を足して文脈にする。"""
+    sid = store.add_source(url="https://example.com/a", kind="official_site", title="紹介")
+    v = store.add_version(sid, text="紹介", title="紹介")
+    ids = [store.add_claim(text=f"背景の説明{i}。", source_version_id=v.version_id) for i in range(6)]
+    hit = store.add_claim(text="主題歌はある楽曲である。", source_version_id=v.version_id)
+    ids += [store.add_claim(text=f"続きの説明{i}。", source_version_id=v.version_id) for i in range(6)]
+
+    got = {c["id"] for c in answer.retrieve(store, "主題歌は？", max_claims=20)["claims"]}
+    assert hit in got
+    assert len(got) > 1
+    assert got & set(ids)
 
 
 def test_retrieve_returns_a_section_in_document_order(store):
