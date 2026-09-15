@@ -476,12 +476,22 @@ def cmd_rule(args: argparse.Namespace) -> None:
 
 def cmd_ask(args: argparse.Namespace) -> None:
     with _store(args) as st:
-        r = answer_mod.answer(st, args.question, model=args.model, use_llm=not args.no_llm)
+        r = answer_mod.answer(st, args.question, model=args.model, use_llm=not args.no_llm,
+                              plan=not args.no_plan)
         if args.json:
             _out(args, r)
             return
+        ctx = r["context"]
+        if ctx.get("targets"):
+            got = ctx.get("claims_per_target") or {}
+            print("対象ごとに分けて調べました: "
+                  + "、".join(f"{t}（{got.get(t, 0)}件）" for t in ctx["targets"]) + "\n")
         if r["answer"]:
             print(r["answer"])
+            if r.get("follow_ups"):
+                print("\n次に訊けること:")
+                for q in r["follow_ups"]:
+                    print(f"  - {q}")
             print(f"\n--- {r['model']} / 主張{len(r['context']['claims'])}件を参照")
         else:
             print(r["prompt"]["user"])
@@ -697,6 +707,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("question")
     sp.add_argument("--model")
     sp.add_argument("--no-llm", action="store_true")
+    sp.add_argument("--no-plan", action="store_true",
+                    help="質問を対象ごとに分けず、一発で引く")
     sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("serve", help="ブラウザUIを起動する")

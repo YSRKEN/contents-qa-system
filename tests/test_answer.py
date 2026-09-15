@@ -206,3 +206,53 @@ def test_a_section_about_the_asked_thing_is_returned_in_depth(store):
 
     got = {c["id"] for c in answer.retrieve(store, "人魚の魔女について教えて", max_claims=30)["claims"]}
     assert len(got & set(want)) >= 4
+
+
+def test_targets_split_the_budget_so_each_one_is_covered(store):
+    """「それぞれの〜」は1回の検索では答えられない。対象ごとに枠を分けること。"""
+    sid = store.add_source(url="https://ja.wikipedia.org/wiki/x", kind="wiki_index", title="一覧")
+    v = store.add_version(sid, text="一覧", title="一覧")
+    detail = {
+        "人魚の魔女": ["上半身は鎧兜をまとった騎士である。", "下半身は魚の姿をしている。",
+                    "多数の車輪を放つ攻撃を行う。"],
+        "お菓子の魔女": ["お菓子の城のような結界を作り出す。", "口の中から巨大な芋虫を出す。",
+                     "好物はチーズであるとされる。"],
+    }
+    want = {}
+    off = 0
+    for name, lines in detail.items():
+        store.ensure_entity(name, kind="term")
+        want[name] = []
+        for t in lines:
+            want[name].append(store.add_claim(
+                text=f"{name}: {t}", source_version_id=v.version_id, offset=off, entities=[name]))
+            off += 1
+    # 一行ずつ並んだ一覧表。1回の検索ではこちらが枠を埋めてしまう
+    table = store.add_source(url="https://example.com/list", kind="fan_chronicle", title="魔女一覧")
+    tv = store.add_version(table, text="一覧", title="魔女一覧")
+    for i in range(60):
+        store.add_claim(text=f"魔女一覧: 名前 第{i}の魔女 / 性質 不明 / 元の姿 不明",
+                        source_version_id=tv.version_id, offset=i)
+
+    q = "それぞれの魔女の姿や能力について教えて"
+    plain = {c["id"] for c in answer.retrieve(store, q, max_claims=40)["claims"]}
+    split = answer.retrieve_for_targets(store, q, list(detail), max_claims=40)
+    got = {c["id"] for c in split["claims"]}
+    for name, ids in want.items():
+        assert len(got & set(ids)) >= 2, name
+    # 対象ごとに何件渡したかを持っている（回答側で項を立てるため）
+    assert set(split["claims_per_target"]) == set(detail)
+    assert sum(len(got & set(ids)) for ids in want.values()) > \
+        sum(len(plain & set(ids)) for ids in want.values())
+
+
+def test_prompt_tells_the_model_to_answer_per_target(store):
+    sid = store.add_source(url="https://example.com/a", kind="official_site", title="紹介")
+    v = store.add_version(sid, text="紹介", title="紹介")
+    store.ensure_entity("かぐや")
+    store.add_claim(text="かぐや: 月から来た少女である。", source_version_id=v.version_id,
+                    entities=["かぐや"])
+    ctx = answer.retrieve_for_targets(store, "それぞれについて教えて", ["かぐや"], max_claims=20)
+    body = answer.format_context(ctx)
+    assert "対象ごとに分けて材料を集めた" in body
+    assert "## かぐや について集めた材料" in body

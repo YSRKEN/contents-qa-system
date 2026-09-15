@@ -6,6 +6,7 @@ LLMを呼ぶかどうかは任意。APIキーが無い環境では、検索し�
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -525,10 +526,24 @@ def format_context(ctx: dict[str, Any]) -> str:
                 lines.append(f"  - {name} と同じ主張に現れる: {pairs}")
         lines.append("")
 
+    if ctx.get("targets"):
+        got = ctx.get("claims_per_target") or {}
+        lines.append(
+            "# 対象ごとに分けて材料を集めた: "
+            + "、".join(f"{t}（{got.get(t, 0)}件）" for t in ctx["targets"])
+        )
+        lines.append("  対象ごとに項を立てて答えること。材料が無い対象は、無いと述べる。")
+        lines.append("")
+
     lines.append("# 知識層の主張")
     if not ctx["claims"]:
         lines.append("（該当なし）")
+    last_target = None
     for c in ctx["claims"]:
+        if c.get("target") and c["target"] != last_target:
+            last_target = c["target"]
+            lines.append("")
+            lines.append(f"## {c['target']} について集めた材料")
         src = c.get("url") or c.get("source_title") or "（出典なし）"
         extra = f" / 矛盾: claim {', '.join(str(x) for x in c['contradicts'])}" if c["contradicts"] else ""
         seg = f" / 区分: {c['segment']}" if c.get("segment") else ""
@@ -558,6 +573,180 @@ def build_prompt(ctx: dict[str, Any]) -> dict[str, str]:
     return {"system": system, "user": user}
 
 
+def retrieve_for_targets(
+    store: WorkStore,
+    question: str,
+    targets: Sequence[str],
+    *,
+    max_claims: int = 120,
+    max_sources: int = 5,
+    extra_terms: Sequence[str] = (),
+) -> dict[str, Any]:
+    """対象ごとに材料を集めてから1つにまとめる。
+
+    「それぞれの魔女化は？」のような質問は、1回の検索では答えられない。
+    どの一人ひとりを指すのかが質問文に書かれていないので、語の重みでは
+    対象を区別できず、120件の枠が一覧表や概要文に薄く広がって終わる。
+
+    枠が足りないのではなく、枠の配り方の問題である。対象ごとに枠を分け、
+    対象の名前を足して引き直すと、その対象の節が選ばれるようになる。
+    """
+    targets = [t.strip() for t in targets if t and t.strip()]
+    if not targets:
+        return retrieve(store, question, max_claims=max_claims,
+                        max_sources=max_sources, extra_terms=extra_terms)
+
+    share = max(12, max_claims // len(targets))
+    claims: list[dict] = []
+    seen: set[int] = set()
+    entities: list[str] = []
+    terms: list[str] = []
+    sources: list[dict] = []
+    seen_src: set[int] = set()
+    related: dict[str, Any] = {}
+    per_target: dict[str, int] = {}
+
+    for target in targets:
+        sub = retrieve(
+            store, f"{target}について。{question}",
+            max_claims=share, max_sources=2,
+            extra_terms=[target, *extra_terms],
+        )
+        got = 0
+        for c in sub["claims"]:
+            if c["id"] in seen:
+                continue
+            seen.add(c["id"])
+            c = dict(c, target=target)
+            claims.append(c)
+            got += 1
+        per_target[target] = got
+        for name in sub["entities"]:
+            if name not in entities:
+                entities.append(name)
+        for t in sub["terms"]:
+            if t not in terms:
+                terms.append(t)
+        related.update(sub["related_entities"])
+        for src in sub["sources"]:
+            if src["source_version_id"] not in seen_src:
+                seen_src.add(src["source_version_id"])
+                sources.append(src)
+
+    return {
+        "question": question,
+        "targets": targets,
+        "claims_per_target": per_target,
+        "entities": entities,
+        "terms": terms,
+        "term_weights": {},
+        "related_entities": related,
+        "claims": claims[:max_claims],
+        "runs_from_sources": [],
+        "sources": sources[:max_sources],
+    }
+
+
+PLAN_PROMPT = """作品『{title}』についての質問を、材料を集めやすい形に分ける。
+
+質問: {question}
+
+この作品に登録されている対象: {entities}
+
+次のJSONだけを返す。
+{{"targets": [...], "depth": "point" | "detail" | "survey"}}
+
+targets: 質問が**複数の対象をまとめて**尋ねているなら（「それぞれ」「全員」「一覧」
+「主要な〜たち」など）、その一人ひとり・一つひとつの名前。上の一覧にある名前をそのまま使う。
+1つの対象だけを尋ねているなら空の配列。
+depth: どれくらいの深さの答えが要るか。
+point=1つの事実を答えれば済む（「監督は誰？」「全何話？」）。
+detail=1つの対象について詳しく述べる（「○○について詳しく」「なぜ○○したの？」）。
+survey=複数の対象を見渡す（「それぞれの〜」「一覧」「時系列」）。"""
+
+FOLLOW_UP_PROMPT = """作品『{title}』の知識ベースで、次のやり取りがあった。
+
+質問: {question}
+
+回答:
+{answer}
+
+この作品に登録されている対象: {entities}
+
+この人が次に知りたくなりそうなことを5つ、質問文の形で挙げる。次を満たすこと。
+・回答が「この知識層には無い」で終わった点や、触れただけで掘り下げていない点を優先する
+・回答の言い換えではなく、一段深いところか、隣にある別の対象を訊く
+・上の「登録されている対象」に出てくる固有名詞を使う
+・1つ40字以内。互いに重ならないようにする
+
+JSON配列だけを返す。"""
+
+
+def _has_key() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+
+
+def _ask_json(prompt: str, *, model: str | None, max_tokens: int = 600) -> Any:
+    """短い問い合わせを1回だけ投げて、JSONを取り出す。失敗したら None。"""
+    if not _has_key():
+        return None
+    try:
+        import anthropic  # type: ignore
+
+        resp = anthropic.Anthropic().messages.create(
+            model=model or DEFAULT_MODEL, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        for opener, closer in (("[", "]"), ("{", "}")):
+            start, end = text.find(opener), text.rfind(closer)
+            if 0 <= start < end:
+                return json.loads(text[start:end + 1])
+    except Exception:
+        return None
+    return None
+
+
+def _entity_names(store: WorkStore, limit: int = 200) -> str:
+    return "、".join(e["name"] for e in store.list_entities() if (e["claims"] or 0) > 0)[:4000]
+
+
+def plan_question(store: WorkStore, question: str, *, model: str | None = None,
+                  limit: int = 8) -> dict[str, Any]:
+    """質問の対象と、要る答えの深さを決める。
+
+    語の一致だけでは「それぞれ」が誰を指すか決められないので、ここだけLLMに委ねる。
+    APIキーが無ければ既定値を返し、従来どおりの一発検索になる。
+    """
+    got = _ask_json(
+        PLAN_PROMPT.format(title=store.meta.get("title") or "", question=question,
+                           entities=_entity_names(store)),
+        model=model)
+    if not isinstance(got, dict):
+        return {"targets": [], "depth": "detail"}
+    targets = got.get("targets")
+    targets = [str(t).strip() for t in targets if str(t).strip()] if isinstance(targets, list) else []
+    depth = got.get("depth") if got.get("depth") in ("point", "detail", "survey") else "detail"
+    return {"targets": targets[:limit], "depth": depth}
+
+
+def follow_ups(store: WorkStore, question: str, answer_text: str, *,
+               model: str | None = None) -> list[str]:
+    """答えたあとに、次に訊きそうなことを出す。
+
+    1回の質問で終わらせず、深いところへ降りていく道を見せるため。
+    """
+    if not answer_text:
+        return []
+    got = _ask_json(
+        FOLLOW_UP_PROMPT.format(title=store.meta.get("title") or "", question=question,
+                                answer=answer_text[:4000], entities=_entity_names(store, 60)),
+        model=model)
+    if not isinstance(got, list):
+        return []
+    return [str(x).strip() for x in got if str(x).strip()][:5]
+
+
 def answer(
     store: WorkStore,
     question: str,
@@ -566,9 +755,20 @@ def answer(
     max_claims: int = 120,
     use_llm: bool = True,
     extra_terms: Sequence[str] = (),
+    plan: bool = True,
 ) -> dict[str, Any]:
     """質問に答える。APIキーが無い/use_llm=False の場合は材料とプロンプトだけを返す。"""
-    ctx = retrieve(store, question, max_claims=max_claims, extra_terms=extra_terms)
+    plan_result = plan_question(store, question, model=model) if (plan and use_llm) else {
+        "targets": [], "depth": "detail"}
+    targets = plan_result["targets"]
+    if len(targets) >= 2:
+        ctx = retrieve_for_targets(store, question, targets,
+                                   max_claims=max_claims, extra_terms=extra_terms)
+    else:
+        # 1つの事実を訊かれているのに120件を渡すと、周辺の話に埋もれて答えがぼやける
+        limit = max_claims // 2 if plan_result["depth"] == "point" else max_claims
+        ctx = retrieve(store, question, max_claims=limit, extra_terms=extra_terms)
+    ctx["depth"] = plan_result["depth"]
     prompt = build_prompt(ctx)
     result: dict[str, Any] = {"context": ctx, "prompt": prompt, "answer": None, "model": None}
 
@@ -611,4 +811,5 @@ def answer(
         return result
     result["answer"] = "\n".join(b.text for b in resp.content if b.type == "text")
     result["model"] = resp.model
+    result["follow_ups"] = follow_ups(store, question, result["answer"], model=model)
     return result
