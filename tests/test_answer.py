@@ -93,3 +93,40 @@ def test_prompt_shows_which_work_a_claim_describes(store):
     body = answer.format_context(ctx)
     assert "区分: 劇場版" in body
     assert "区分" in answer.build_prompt(ctx)["system"]
+
+
+def test_section_only_match_ranks_below_a_real_mention(store):
+    """名言集のように、見出しだけが人物名で本文がセリフの出典に材料を食われない。"""
+    store.ensure_entity("彩葉")
+    quotes = store.add_source(url="https://example.com/meigen", kind="fan_chronicle", title="名言集")
+    qv = store.add_version(quotes, text="名言", title="名言集")
+    for i in range(30):
+        store.add_claim(text=f"By 彩葉 / 名言まとめ: どうしてこうなったの{i}。",
+                        source_version_id=qv.version_id, entities=["彩葉"])
+    prose = store.add_source(url="https://example.com/wiki", kind="wiki_index", title="解説")
+    pv = store.add_version(prose, text="解説", title="解説")
+    said = store.add_claim(text="人物: 彩葉はかぐやの保護者として振る舞う。",
+                           source_version_id=pv.version_id, entities=["彩葉"])
+
+    ctx = answer.retrieve(store, "彩葉はどんな人？", max_claims=10)
+    ids = [c["id"] for c in ctx["claims"]]
+    assert said in ids
+    assert ids.index(said) < 5
+
+
+def test_run_comes_from_where_the_hits_cluster(store):
+    """大きい出典でも、当たりが密集した区間が選ばれる（端から端まで平均されない）。"""
+    sid = store.add_source(url="https://example.com/long", kind="wiki_index", title="長い記事")
+    v = store.add_version(sid, text="長い記事", title="長い記事")
+    store.ensure_entity("かぐや")
+    ids = []
+    for i in range(60):
+        about = "かぐや" if 40 <= i < 52 else "別の話題"
+        ids.append(store.add_claim(
+            text=f"節: {about}についての記述{i}。", source_version_id=v.version_id,
+            entities=["かぐや"] if about == "かぐや" else [],
+        ))
+    ctx = answer.retrieve(store, "かぐやについて教えて", max_claims=30)
+    got = {c["id"] for c in ctx["claims"]}
+    assert set(ids[40:52]) <= got
+    assert not (set(ids[:20]) & got)

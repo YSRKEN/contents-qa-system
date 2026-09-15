@@ -77,27 +77,56 @@ def term_weight(store: WorkStore, term: str, total: int) -> float:
     return round(8.0 * math.log(max(total / df, 1.0)) / math.log(total), 2)
 
 
-def _run_from_source(store: WorkStore, source_version_id: int, ids: Sequence[int], limit: int) -> list[dict]:
-    """当たりが集まった出典を、原文の並び順（=claim IDの順）ごと取り出す。
+def _best_window(positions: Sequence[int], hits: dict[int, float], width: int) -> tuple[int, int, float]:
+    """当たりが最も密集している、幅 width の区間を返す。
 
-    「時系列を出せ」「あらすじを出せ」のような質問は、語が一致する文を拾い集めても
-    答えにならない。順序そのものが答えなので、節を丸ごと渡す。
+    出典を丸ごと1つの塊として点を付けると、Wikipediaのように何百件も主張のある出典は
+    「当たりの総和は大きいが、当たりどうしが記事の端から端まで散っている」状態になり、
+    正規化で割り引くと今度は該当節ごと沈む。実際に渡すのは連続した一区間なので、
+    その一区間が持つ当たりの量で比べる。
     """
-    rows = [
+    scores = [hits.get(cid, 0.0) for cid in positions]
+    n = len(scores)
+    if n <= width:
+        return 0, n, sum(scores)
+    cur = sum(scores[:width])
+    best = (0, width, cur)
+    for i in range(1, n - width + 1):
+        cur += scores[i + width - 1] - scores[i - 1]
+        if cur > best[2]:
+            best = (i, i + width, cur)
+    return best
+
+
+def _claims_in_order(store: WorkStore) -> dict[int, list[int]]:
+    """出典ごとの主張IDを、原文での並び順（=ID順）で返す。"""
+    order: dict[int, list[int]] = {}
+    for r in store.conn.execute(
+        "SELECT id, source_version_id AS sv FROM claims "
+        "WHERE status='active' AND source_version_id IS NOT NULL ORDER BY id"
+    ):
+        order.setdefault(int(r["sv"]), []).append(int(r["id"]))
+    return order
+
+
+def _fetch_claims(store: WorkStore, ids: Sequence[int]) -> list[dict]:
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    return [
         store._claim_row(r)
         for r in store.conn.execute(
-            store._CLAIM_SELECT
-            + " WHERE c.source_version_id = ? AND c.status = 'active' ORDER BY c.id",
-            (source_version_id,),
+            store._CLAIM_SELECT + f" WHERE c.id IN ({marks}) ORDER BY c.id", tuple(ids)
         )
     ]
-    if len(rows) <= limit:
-        return rows
-    # 収まらない場合は、当たりが集まっているあたりを中心に切り出す
-    center = (min(ids) + max(ids)) // 2
-    order = sorted(range(len(rows)), key=lambda i: abs(rows[i]["id"] - center))
-    keep = sorted(order[:limit])
-    return [rows[i] for i in keep]
+
+
+def split_section(text: str) -> tuple[str, str]:
+    """主張は「節見出し: 本文」の形で入っている。見出しと本文に分ける。"""
+    head, sep, body = text.partition(": ")
+    if sep and len(head) <= 80:
+        return head, body
+    return "", text
 
 
 def retrieve(
@@ -121,13 +150,33 @@ def retrieve(
 
     scored: dict[int, tuple[int, dict]] = {}
 
-    def bump(c: dict, points: int) -> None:
+    def bump(c: dict, points: float) -> None:
         prev = scored.get(c["id"])
         scored[c["id"]] = (prev[0] + points if prev else points, c)
 
+    def matched_weight(c: dict, needles: Sequence[str], points: float) -> float:
+        """本文に当たったのか、節見出しにだけ当たったのかで重みを変える。
+
+        名言集の主張は「By 鹿目まどか / ○○の名言: <セリフ>」の形で入る。セリフ本体は
+        誰のことも名指ししていないのに、見出しのおかげでエンティティ一致として満点を取り、
+        「関係は？」のような質問の材料を数十件単位で食い潰していた。
+        見出しは「この主張が何の話題の下にあるか」であって「何を述べているか」ではないので、
+        見出しだけの一致は本文の一致より軽くする。
+        """
+        _, body = split_section(c["text"])
+        flat_body = textutil.flatten(body)
+        if any(textutil.flatten(n) in flat_body for n in needles):
+            return points
+        return points * 0.25
+
+    alias_map = {e["name"]: [e["name"], *e.get("aliases", [])] for e in store.list_entities()}
     for name in ents:
-        for c in store.search_claims(entity=name, limit=max_claims * 2):
-            bump(c, 4)
+        names = alias_map.get(name, [name])
+        # エンティティ一致は索引を引くだけで安いので、打ち切らずに全部見る。
+        # ここを max_claims の数倍で打ち切ると、主人公のように何百件も付く人物では
+        # 打ち切りの内側に入った出典だけが候補になり、出典の選び方が偶然で決まる。
+        for c in store.search_claims(entity=name, limit=100000):
+            bump(c, matched_weight(c, names, 4))
     total = store.stats()["claims_active"]
     weights = {t: term_weight(store, t, total) for t in terms}
     # ほぼ全件に当たる語は点数を支配するだけなので落とす。ただし全部落ちると
@@ -137,7 +186,7 @@ def retrieve(
         useful = [t for t, w in sorted(weights.items(), key=lambda kv: -kv[1]) if w > 0][:2]
     for t in useful:
         for c in store.search_claims(query=t, limit=max_claims * 3):
-            bump(c, max(weights[t], 0.5))
+            bump(c, matched_weight(c, [t], max(weights[t], 0.5)))
 
     ranked = sorted(
         scored.values(),
@@ -149,22 +198,28 @@ def retrieve(
     for score, c in ranked:
         if c["source_version_id"]:
             by_source.setdefault(int(c["source_version_id"]), []).append((score, c))
-    # 出典ごとの主張の総数。大きい出典ほど弱い当たりが積み上がって有利になるので割る。
-    sizes = {
-        int(r["sv"]): int(r["n"])
-        for r in store.conn.execute(
-            "SELECT source_version_id AS sv, COUNT(*) AS n FROM claims "
-            "WHERE status='active' AND source_version_id IS NOT NULL GROUP BY source_version_id"
-        )
-    }
-
     def title_bonus(items: list[tuple[float, dict]]) -> float:
-        """出典のタイトル自体が検索語を含むなら、その出典が答えそのものである可能性が高い。"""
+        """出典のタイトル自体が検索語を含むなら、その出典が答えそのものである可能性が高い。
+
+        ただし「関係」「作品」のようなありふれた語はどの記事の見出しにも出るので、
+        語の重みをそのまま使い、加点の総量にも上限を置く。ここを大きくすると、
+        中身がほとんど当たっていない出典が題名だけで節ごと選ばれてしまう。
+        """
         title = (items[0][1].get("source_title") or "") + " " + (items[0][1].get("url") or "")
-        return sum(max(weights.get(t, 0), 1.0) * 4 for t in terms if t and t in title)
+        return min(sum(weights.get(t, 0) * 2 for t in terms if t and t in title), 8.0)
+
+    # 節が材料を食い尽くさないように、全体の6割までに抑える
+    run_budget = max(8, int(max_claims * 0.6 / 3))
+    in_order = _claims_in_order(store)
+    windows: dict[int, tuple[int, int, float]] = {}
+    for svid, items in by_source.items():
+        hits = {c["id"]: score for score, c in items}
+        windows[svid] = _best_window(in_order.get(svid, []), hits, run_budget)
 
     def source_score(svid: int, items: list[tuple[float, dict]]) -> float:
-        base = sum(s for s, _ in items) / math.sqrt(max(sizes.get(svid, 1), 1)) + title_bonus(items)
+        # 渡すのは連続した一区間なので、その区間が持つ当たりの量で比べる。
+        # 幅が同じなので出典の大きさで割る必要はない。
+        base = windows[svid][2] / math.sqrt(run_budget) + title_bonus(items)
         # 出典の優先順を効かせる。感想noteの節が公式・記事の節を押しのけないように
         return base * (0.5 + items[0][1].get("priority", 0) / 200)
 
@@ -175,10 +230,9 @@ def retrieve(
         for svid, items in sorted(by_source.items(), key=lambda kv: -source_score(kv[0], kv[1]))[:3]
         if len(items) >= 3 or title_bonus(items) > 0
     ]
-    # 節が材料を食い尽くさないように、全体の6割までに抑える
-    run_budget = max(8, int(max_claims * 0.6 / max(len(chosen), 1)))
-    for svid, items in chosen:
-        runs.extend(_run_from_source(store, svid, [c["id"] for _, c in items], run_budget))
+    for svid, _ in chosen:
+        start, end, _score = windows[svid]
+        runs.extend(_fetch_claims(store, in_order.get(svid, [])[start:end]))
         used_sources.append(svid)
 
     # 並び: まず当たりの強い主張（点で答える質問のため）、次に節を原文の並び順で

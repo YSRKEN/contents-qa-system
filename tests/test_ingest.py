@@ -89,3 +89,24 @@ def test_shorter_name_inside_a_longer_one_is_not_tagged(store):
     by_text = {store.get_claim(i)["text"]: store.get_claim(i)["entities"] for i in ids}
     assert by_text["魔法少女まどか☆マギカは2011年に放送された。"] == ["魔法少女まどか☆マギカ"]
     assert by_text["まどかは中学2年生である。"] == ["鹿目まどか"]
+
+
+def test_section_heading_names_carry_into_its_sentences(store):
+    """人物名の見出しの下にある文は、その人物についての記述として扱う。
+
+    日本語の地の文は主語を繰り返さないので、文だけを見ると
+    「劇中で印象が二転三転していく」のような文が丸ごと落ちる。
+    """
+    store.ensure_entity("暁美ほむら", aliases=["ほむら"])
+    text = (
+        "暁美ほむら\n\n"
+        "第1話で転校してきた魔法少女。\n\n"
+        "劇中でその内面や過去などの秘密が明かされていく。\n\n"
+        "巴マミ\n\n"
+        "ベテランの魔法少女である。\n"
+    )
+    sid = store.add_source(url="https://example.com/chara", kind="wiki_index", title="キャラ一覧")
+    v = store.add_version(sid, text=text, title="キャラ一覧")
+    got = {c["text"] for c in ingest.propose_claims(store, v.version_id)}
+    assert "劇中でその内面や過去などの秘密が明かされていく。" in got
+    assert "ベテランの魔法少女である。" not in got

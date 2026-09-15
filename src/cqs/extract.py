@@ -126,10 +126,20 @@ def candidate_sentences(
                 continue
             flat = textutil.flatten(s)
             hit = [e for e in entities if e and (e in s or textutil.flatten(e) in flat)]
-            if entities and not hit:
+            # 節見出しが人物名なら、その節の文はその人物についての記述。
+            # 日本語の地の文は主語を繰り返さないので、文だけを見ると
+            # 「劇中でその内面や過去が明かされていく」のような、
+            # 誰について書かれているかが見出しにしか無い文が丸ごと落ちる。
+            flat_section = textutil.flatten(section or "")
+            from_section = [
+                e for e in entities
+                if e and e not in hit and (e in (section or "") or textutil.flatten(e) in flat_section)
+            ]
+            if entities and not hit and not from_section:
                 continue
             out.append({
-                "text": s, "section": section, "entities": hit,
+                "text": s, "section": section, "entities": [*hit, *from_section],
+                "entities_in_text": hit,
                 "offset": idx if idx >= 0 else None,
             })
     return out
