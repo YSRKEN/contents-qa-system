@@ -296,6 +296,37 @@ class WorkStore:
             return None
         return zlib.decompress(r["raw_gz"]).decode("utf-8", "replace")
 
+    def rederive_text(self, version_id: int) -> dict:
+        """保存済みの生HTMLから本文を作り直す（再取得しない）。
+
+        原文層が保存しているのは取得したHTMLそのもので、`text` はその描画結果にすぎない。
+        表の扱いのように描画の仕方を直したときは、同じHTMLから作り直せば足りる。
+        取得し直すわけではないので、取得日時と版番号は変えない。
+        """
+        from . import fetch
+
+        raw = self.get_raw_html(version_id)
+        if not raw:
+            return {"version_id": version_id, "changed": False, "reason": "生データが保存されていません"}
+        url = (self.get_version(version_id) or {}).get("url")
+        text, title = fetch.render_snapshot(raw, url)
+        if not text:
+            return {"version_id": version_id, "changed": False, "reason": "本文を取り出せませんでした"}
+        row = self.conn.execute(
+            "SELECT text, title FROM source_versions WHERE id = ?", (version_id,)
+        ).fetchone()
+        if row is None:
+            raise StoreError(f"出典版が見つかりません: {version_id}")
+        if row["text"] == text:
+            return {"version_id": version_id, "changed": False, "before": len(row["text"])}
+        self.conn.execute(
+            "UPDATE source_versions SET text = ?, content_hash = ?, title = COALESCE(?, title) WHERE id = ?",
+            (text, textutil.content_hash(text), title, version_id),
+        )
+        self.conn.commit()
+        self.log("rederive_text", {"version_id": version_id, "before": len(row["text"]), "after": len(text)})
+        return {"version_id": version_id, "changed": True, "before": len(row["text"]), "after": len(text)}
+
     def source_excerpt(self, version_id: int, *, offset: int = 0, length: int = 2000) -> dict | None:
         """出典参照ツールの実体。版の本文を位置指定で切り出す。"""
         v = self.get_version(version_id)

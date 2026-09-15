@@ -213,6 +213,58 @@ def cmd_sources(args: argparse.Namespace) -> None:
         print(f"{len(rows)}件")
 
 
+def cmd_images(args: argparse.Namespace) -> None:
+    from . import images
+
+    with _store(args) as st:
+        if args.images_command == "list":
+            rows = images.list_images(st, args.source_version_id, include_chrome=args.all)
+            if args.json:
+                _out(args, [r.__dict__ for r in rows])
+                return
+            for r in rows:
+                size = f"{r.width}x{r.height}" if r.width and r.height else ""
+                print(f"  {size:<10} {r.alt[:28]:<30} {r.url[:96]}")
+            print(f"{len(rows)}件")
+        elif args.images_command == "save":
+            rows = images.save_all(st, args.source_version_id, args.out)
+            if args.json:
+                _out(args, rows)
+                return
+            for r in rows:
+                print(f"× {r['url']}: {r['error']}" if "error" in r
+                      else f"○ {r['path']}  ({r['bytes']//1024}KB)  {r['url'][:70]}")
+            print(f"{args.out} に保存しました。読み取り結果は "
+                  f"cqs -w {args.work} add-text --kind image_transcript --url <画像URL> で入れられます。")
+        elif args.images_command == "transcribe":
+            rows = images.transcribe(st, args.source_version_id, model=args.model, limit=args.limit)
+            if args.json:
+                _out(args, rows)
+                return
+            for r in rows:
+                print(f"× {r['url']}: {r['error']}" if "error" in r
+                      else f"○ {r['chars']:>5}字 → source_version {r['source_version_id']}  {r['url'][:70]}")
+
+
+def cmd_rederive(args: argparse.Namespace) -> None:
+    with _store(args) as st:
+        if args.source_version_id:
+            targets = [args.source_version_id]
+        else:
+            targets = [int(r["id"]) for r in st.conn.execute(
+                "SELECT id FROM source_versions WHERE raw_gz IS NOT NULL ORDER BY id")]
+        results = [st.rederive_text(v) for v in targets]
+        changed = [r for r in results if r.get("changed")]
+        if args.json:
+            _out(args, results)
+            return
+        for r in changed:
+            print(f"  v{r['version_id']}: {r['before']}字 → {r['after']}字")
+        print(f"{len(results)}件を作り直し、{len(changed)}件で本文が変わりました。")
+        if changed:
+            print("  変わった版の主張は取り込み直してください（cqs propose <id> --register）")
+
+
 def cmd_source_kind(args: argparse.Namespace) -> None:
     with _store(args) as st:
         st.set_source_kind(args.source_id, args.kind)
@@ -473,6 +525,26 @@ def build_parser() -> argparse.ArgumentParser:
     w3 = wsub.add_parser("annotate", help="Wiki由来の主張に、根拠となる脚注を書き添える")
     w3.add_argument("source_version_id", type=int)
     w3.set_defaults(func=cmd_wiki)
+
+    ip = sub.add_parser("images", help="記事に貼られた画像（表・カレンダー・図）の中身を扱う")
+    isub = ip.add_subparsers(dest="images_command", required=True)
+    i1 = isub.add_parser("list", help="本文に属する画像を一覧する")
+    i1.add_argument("source_version_id", type=int)
+    i1.add_argument("--all", action="store_true", help="アイコンやサムネイルも含める")
+    i1.set_defaults(func=cmd_images)
+    i2 = isub.add_parser("save", help="画像を保存する（自分で読む／別の道具に渡す）")
+    i2.add_argument("source_version_id", type=int)
+    i2.add_argument("--out", default="./images")
+    i2.set_defaults(func=cmd_images)
+    i3 = isub.add_parser("transcribe", help="画像をClaudeに読み取らせ、原文層に入れる（APIキーが要る）")
+    i3.add_argument("source_version_id", type=int)
+    i3.add_argument("--model")
+    i3.add_argument("--limit", type=int, default=20)
+    i3.set_defaults(func=cmd_images)
+
+    sp = sub.add_parser("rederive", help="保存済みの生HTMLから本文を作り直す（再取得しない）")
+    sp.add_argument("source_version_id", type=int, nargs="?")
+    sp.set_defaults(func=cmd_rederive)
 
     sp = sub.add_parser("source-kind", help="取り込み済みの出典の種別を変える")
     sp.add_argument("source_id", type=int)

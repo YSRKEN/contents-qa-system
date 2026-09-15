@@ -31,6 +31,14 @@ SOURCE_KINDS: dict[str, dict] = {
         "refetch": "once",
         "verification": "article",
     },
+    "image_transcript": {
+        # 記事に貼られた表・カレンダー・図の画像を読み取った結果。
+        # 元の出典が何であれ、読み取りを挟む以上は伝聞として扱う。
+        "label": "画像の読み取り",
+        "priority": 40,
+        "refetch": "once",
+        "verification": "secondhand",
+    },
     "fan_chronicle": {
         # 感想ではなく「本編に何が描かれていたか」の記述。作中の日付や配置の読み取り、
         # 時系列の整理など、原理的には本編を見れば検証できる内容を置く。

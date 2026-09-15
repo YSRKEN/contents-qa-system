@@ -168,7 +168,7 @@ def retrieve(
     used_sources: list[int] = []
     chosen = [
         (svid, items)
-        for svid, items in sorted(by_source.items(), key=lambda kv: -source_score(kv[0], kv[1]))[:2]
+        for svid, items in sorted(by_source.items(), key=lambda kv: -source_score(kv[0], kv[1]))[:3]
         if len(items) >= 3 or title_bonus(items) > 0
     ]
     # 節が材料を食い尽くさないように、全体の6割までに抑える

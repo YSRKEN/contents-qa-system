@@ -281,3 +281,32 @@ def fetch_x(
         url=url, final_url=url, status=200, html=json.dumps(data, ensure_ascii=False, indent=2),
         text=text, title=title, content_type="application/json (fxtwitter)",
     )
+
+
+def render_snapshot(raw: str, url: str | None = None) -> tuple[str, str | None]:
+    """保存してある生データから本文を作り直す。
+
+    原文層に入っている「生データ」はHTMLとは限らない。X はFxTwitterのJSONを保存しているので、
+    HTMLとして解釈すると本文がJSONそのものになってしまう。中身を見て描画を選ぶ。
+    """
+    head = raw.lstrip()[:1]
+    if head in ("{", "["):
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return textutil.clean_text(raw), None
+        tweet = data.get("status") or data.get("tweet")
+        if tweet:
+            author = (tweet.get("author") or data.get("author") or {}).get("screen_name", "")
+            return textutil.clean_text(_format_tweet(tweet)), f"@{author} の投稿 {tweet.get('id', '')}".strip()
+        u = data.get("user")
+        if u:
+            text = textutil.clean_text(
+                f"{u.get('name', '')}（@{u.get('screen_name', '')}）\n\n"
+                f"{u.get('description', '')}\n\n"
+                f"所在地: {u.get('location') or '-'} / サイト: {(u.get('website') or {}).get('url', '-')}\n"
+                f"フォロワー {u.get('followers', '-')} / 投稿数 {u.get('tweets', '-')} / 開設 {u.get('joined', '-')}"
+            )
+            return text, f"@{u.get('screen_name', '')} プロフィール"
+        return textutil.clean_text(raw), None
+    return textutil.html_to_text(raw)

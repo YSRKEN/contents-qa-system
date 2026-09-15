@@ -32,10 +32,49 @@ class _Extractor(HTMLParser):
         self.title: str | None = None
         self._drop_depth = 0
         self._in_title = False
+        # 表は行と列の対応が意味を持つ。セルを行ごとに集めてから1行のテキストに畳む。
+        self._table_depth = 0
+        self._rows: list[tuple[bool, list[str]]] = []
+        self._row: list[str] | None = None
+        self._row_is_header = True
+        self._cell: list[str] | None = None
+        self._caption: list[str] | None = None
+
+    # --- 表 ---
+    def _start_table(self) -> None:
+        self._table_depth += 1
+        if self._table_depth == 1:
+            self._rows, self._row, self._cell, self._caption = [], None, None, None
+
+    def _end_table(self) -> None:
+        if self._table_depth == 0:
+            return
+        self._table_depth -= 1
+        if self._table_depth == 0:
+            self.parts.append("\n" + render_table(self._caption_text(), self._rows) + "\n")
+            self._rows, self._row, self._cell, self._caption = [], None, None, None
+
+    def _caption_text(self) -> str:
+        return re.sub(r"\s+", " ", "".join(self._caption or [])).strip()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in _DROP_TAGS:
             self._drop_depth += 1
+            return
+        if tag == "table":
+            self._start_table()
+            return
+        if self._table_depth:
+            if tag == "caption":
+                self._caption = []
+            elif tag == "tr":
+                self._row, self._row_is_header = [], True
+            elif tag in ("td", "th"):
+                self._cell = []
+                if tag == "td":
+                    self._row_is_header = False
+            elif tag == "br" and self._cell is not None:
+                self._cell.append(" ")
             return
         if tag == "title":
             self._in_title = True
@@ -57,6 +96,21 @@ class _Extractor(HTMLParser):
         if tag in _DROP_TAGS:
             self._drop_depth = max(0, self._drop_depth - 1)
             return
+        if tag == "table":
+            self._end_table()
+            return
+        if self._table_depth:
+            if tag == "caption":
+                pass
+            elif tag in ("td", "th") and self._cell is not None:
+                if self._row is None:
+                    self._row = []
+                self._row.append(re.sub(r"\s+", " ", "".join(self._cell)).strip())
+                self._cell = None
+            elif tag == "tr" and self._row is not None:
+                self._rows.append((self._row_is_header, self._row))
+                self._row = None
+            return
         if tag == "title":
             self._in_title = False
         if tag in _BLOCK_TAGS:
@@ -68,8 +122,43 @@ class _Extractor(HTMLParser):
             return
         if self._drop_depth:
             return
+        if self._table_depth:
+            if self._cell is not None:
+                self._cell.append(data)
+            elif self._caption is not None:
+                self._caption.append(data)
+            return
         if data.strip():
             self.parts.append(data)
+
+
+def render_table(caption: str, rows: list[tuple[bool, list[str]]]) -> str:
+    """表を、行ごとに1行のテキストへ畳む。
+
+    セルを縦に並べただけでは行と列の対応が失われ、「5位」「14.81」といった
+    値だけが本文に散らばる。見出し行があれば「見出し: 値」の対で書き出す。
+    """
+    body = [cells for is_header, cells in rows if any(c.strip() for c in cells)]
+    if not body:
+        return ""
+    header: list[str] | None = None
+    if rows and rows[0][0]:                       # 先頭行がすべて見出しセルなら列名として使う
+        candidate = rows[0][1]
+        if len(candidate) >= 2 and any(c.strip() for c in candidate):
+            header = candidate
+            body = body[1:]
+    lines: list[str] = []
+    if caption:
+        lines.append(f"【表: {caption}】")
+    for cells in body:
+        cells = [c.strip() for c in cells]
+        if header and len(cells) == len(header):
+            pairs = [f"{h.strip()}: {c}" for h, c in zip(header, cells) if c]
+        else:
+            pairs = [c for c in cells if c]
+        if pairs:
+            lines.append("・" + " / ".join(pairs))
+    return "\n".join(lines)
 
 
 def html_to_text(html: str) -> tuple[str, str | None]:

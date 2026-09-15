@@ -46,3 +46,21 @@ def test_env_flag_reads_falsey_values(monkeypatch):
     assert fetch._env_flag("CQS_TEST_FLAG", False) is True
     monkeypatch.delenv("CQS_TEST_FLAG")
     assert fetch._env_flag("CQS_TEST_FLAG", True) is True
+
+
+def test_render_snapshot_handles_fxtwitter_json():
+    """Xの版はJSONを保存しているので、HTMLとして解釈してはいけない。"""
+    raw = (
+        '{"code":200,"status":{"id":"1","text":"復活上映が決定しました。",'
+        '"created_at":"Wed Jul 15 12:01:00 +0000 2026",'
+        '"author":{"name":"公式","screen_name":"Cho_KaguyaHime"}}}'
+    )
+    text, title = fetch.render_snapshot(raw)
+    assert "復活上映が決定しました。" in text
+    assert "{" not in text
+    assert title == "@Cho_KaguyaHime の投稿 1"
+
+
+def test_render_snapshot_handles_html():
+    text, title = fetch.render_snapshot("<html><head><title>作品</title></head><body><p>本文。</p></body></html>")
+    assert text == "本文。" and title == "作品"
