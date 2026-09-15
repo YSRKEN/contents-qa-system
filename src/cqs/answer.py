@@ -101,7 +101,7 @@ def retrieve(
     store: WorkStore,
     question: str,
     *,
-    max_claims: int = 40,
+    max_claims: int = 120,
     max_sources: int = 5,
     extra_terms: Sequence[str] = (),
 ) -> dict[str, Any]:
@@ -276,7 +276,7 @@ def answer(
     question: str,
     *,
     model: str | None = None,
-    max_claims: int = 40,
+    max_claims: int = 120,
     use_llm: bool = True,
     extra_terms: Sequence[str] = (),
 ) -> dict[str, Any]:
