@@ -73,3 +73,19 @@ def test_entity_matching_ignores_spaces_in_names(store):
     r = ingest.ingest_text(store, text, kind="wiki_index", title="Wiki")
     ids = ingest.register_proposed(store, r["source_version_id"], require_entity=False)
     assert any("諌山真実" in store.get_claim(i)["entities"] for i in ids)
+
+
+def test_shorter_name_inside_a_longer_one_is_not_tagged(store):
+    """「まどか」は「魔法少女まどか☆マギカ」の一部でもある。作品名が出ただけの文に
+    登場人物を紐づけない。"""
+    store.ensure_entity("鹿目まどか", kind="character", aliases=["まどか"])
+    store.ensure_entity("魔法少女まどか☆マギカ", kind="work")
+    r = ingest.ingest_text(
+        store,
+        "魔法少女まどか☆マギカは2011年に放送された。\nまどかは中学2年生である。\n",
+        kind="wiki_index", title="Wiki",
+    )
+    ids = ingest.register_proposed(store, r["source_version_id"], require_entity=False)
+    by_text = {store.get_claim(i)["text"]: store.get_claim(i)["entities"] for i in ids}
+    assert by_text["魔法少女まどか☆マギカは2011年に放送された。"] == ["魔法少女まどか☆マギカ"]
+    assert by_text["まどかは中学2年生である。"] == ["鹿目まどか"]

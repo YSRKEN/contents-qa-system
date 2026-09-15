@@ -188,6 +188,21 @@ def verify_candidates(
     return results
 
 
+def _longest_matches(hits: Sequence[str]) -> list[str]:
+    """短いほうが長いほうに含まれている一致を落とす。
+
+    「まどか」は「魔法少女まどか☆マギカ」の一部でもある。作品名が出ただけの文に
+    登場人物が紐づくと、そのキャラクターの主張が本文と関係なく膨らむ。
+    長い一致が取れているなら、その中に収まる短い一致は数えない。
+    """
+    out = []
+    for h in hits:
+        if any(h != other and h in other for other in hits):
+            continue
+        out.append(h)
+    return out
+
+
 def _surface_map(store: WorkStore, entities: Sequence[str]) -> dict[str, str]:
     """本文に現れ得る表記 → 正規名 の対応表。別名も検索対象に含める。"""
     out: dict[str, str] = {}
@@ -229,14 +244,16 @@ def propose_claims(
         hits = c["entities"] or [
             k for k in surfaces if k in c["text"] or textutil.flatten(k) in flat_text
         ]
-        c["entities"] = sorted({surfaces[k] for k in hits})
+        c["entities"] = sorted({surfaces[k] for k in _longest_matches(hits)})
         # 節見出しがあれば、それも対象エンティティの手がかりにする
         if c.get("section"):
             flat_section = textutil.flatten(c["section"])
+            section_hits = [
+                k for k in surfaces
+                if k in c["section"] or textutil.flatten(k) in flat_section
+            ]
             c["entities"] = sorted(
-                set(c["entities"])
-                | {surfaces[k] for k in surfaces
-                   if k in c["section"] or textutil.flatten(k) in flat_section}
+                set(c["entities"]) | {surfaces[k] for k in _longest_matches(section_hits)}
             )
     return cands[:limit]
 
