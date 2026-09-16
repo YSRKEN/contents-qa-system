@@ -50,6 +50,9 @@ _LEADING_SYMBOLS = re.compile(r"^[^\w\u3040-\u30ff\u4e00-\u9fff]+")
 _NOT_A_HEADING = re.compile(r"^(編集|ソースを編集|続きを読む|目次|関連記事|広告|スポンサーリンク|PR)$")
 # 見出しの末尾に付くWikiの編集リンク（「概要[編集]」）
 _EDIT_LINK = re.compile(r"\s*\[(編集|ソースを編集|edit)\]\s*$")
+# 見出しのすぐ下に単独行で入る編集リンク（Wikipediaの「[編集]」）。
+# 見出しでも本文でもないので、節の連鎖を切らないよう無かったことにする。
+_EDIT_LINE = re.compile(r"^\[?(編集|ソースを編集|edit)\]?$")
 # 行頭の箇条書き記号
 _BULLET = re.compile(r"^[・･\-*+•●○◆▶▼]\s*(.+)$")
 # 作品についての記述ではなく、書誌情報が並ぶ節（Wikiの末尾）
@@ -108,7 +111,7 @@ def candidate_sentences(
     after_heading = False
     for line in textutil.join_wrapped_lines(text).split("\n"):
         line = line.strip()
-        if not line:
+        if not line or _EDIT_LINE.match(line):
             continue
         bullet = _BULLET.match(line)
         if track_sections and not bullet:
