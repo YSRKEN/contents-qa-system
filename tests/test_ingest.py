@@ -193,3 +193,36 @@ def test_cli_register_leaves_the_decision_to_the_source_kind(store, monkeypatch,
     cli.cmd_propose(args)
     got = {c["text"] for c in store.search_claims(limit=50)}
     assert "月には都があるとされる。" in got
+
+
+def test_inbox_lands_in_the_source_layer_only(store):
+    """出先で書き留めたものは原文層まで。知識層へは通常どおり propose を通す。"""
+    entries = [
+        {"kind": "text", "title": "貼った資料", "body": "かぐやは月から来た少女である。"},
+        {"kind": "note", "title": "気付き", "body": "ほむらの真名を確かめる。"},
+        {"kind": "text", "title": "空", "body": "   "},
+    ]
+    rows = ingest.import_inbox(store, entries)
+    assert [("error" in r) for r in rows] == [False, False, True]
+    assert store.stats()["claims_active"] == 0        # 主張にはしない
+    texts = {st["title"] for st in store.list_sources()}
+    assert {"貼った資料", "気付き"} <= texts
+    # 通常の道筋で主張にできる
+    ids = ingest.register_proposed(store, rows[0]["source_version_id"], require_entity=False)
+    assert ids
+
+
+def test_inbox_accepts_what_the_page_hands_over(store, monkeypatch):
+    """ページが書き出すJSONの形を、そのまま受け取れること。"""
+    import json
+
+    from cqs import cli
+
+    handed = json.dumps([{"work": "w", "at": "2026-09-16T00:00:00.000Z",
+                          "kind": "note", "title": "メモ", "body": "確かめること"}])
+    monkeypatch.setattr(cli.config, "open_work", lambda slug: store)
+    monkeypatch.setattr(store, "close", lambda: None)
+    import argparse
+    cli.cmd_inbox(argparse.Namespace(work="w", json=False, file=None, text=handed,
+                                     robots=False, no_robots=False))
+    assert any(s["title"] == "メモ" for s in store.list_sources())

@@ -165,6 +165,34 @@ def cmd_add_report(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_inbox(args: argparse.Namespace) -> None:
+    raw = _read_input(args.file, args.text)
+    try:
+        entries = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"JSONとして読めません: {e}")
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        raise SystemExit("JSONの配列（またはひとつの物）を渡してください")
+    with _store(args) as st:
+        rows = ingest.import_inbox(st, entries, respect_robots=_robots_setting(args))
+        if args.json:
+            _out(args, rows)
+            return
+        for r in rows:
+            if "error" in r:
+                print(f"× {r['error']}: {str(r['entry'])[:60]}")
+            else:
+                print(f"○ [{r['kind_label']}] {r.get('title') or ''} "
+                      f"source_version={r['source_version_id']}")
+        ok = [r for r in rows if "error" not in r]
+        print(f"{len(ok)}/{len(rows)}件を原文層に入れました。")
+        if ok:
+            ids = " ".join(str(r["source_version_id"]) for r in ok)
+            print(f"  主張にするには: cqs -w {args.work} propose <版ID> --register   （版ID: {ids}）")
+
+
 def cmd_candidates(args: argparse.Namespace) -> None:
     with _store(args) as st:
         rows = st.list_candidates(status=None if args.status == "all" else args.status, limit=args.limit)
@@ -555,6 +583,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--file")
     sp.add_argument("--text")
     sp.set_defaults(func=cmd_add_report)
+
+    sp = sub.add_parser("inbox", help="ブラウザで書き留めたものを原文層に入れる")
+    g = sp.add_mutually_exclusive_group()
+    g.add_argument("--file", help="JSONファイル（省略/'-' で標準入力）")
+    g.add_argument("--text", help="JSONそのもの")
+    sp.add_argument("--robots", action="store_true")
+    sp.add_argument("--no-robots", action="store_true")
+    sp.set_defaults(func=cmd_inbox)
 
     sp = sub.add_parser("candidates", help="未照合の候補一覧")
     sp.add_argument("--status", default="pending", choices=["pending", "verified", "rejected", "all"])

@@ -91,6 +91,47 @@ def ingest_ai_report(store: WorkStore, text: str, *, title: str, note: str | Non
     return r
 
 
+def import_inbox(
+    store: WorkStore,
+    entries: Sequence[dict],
+    *,
+    respect_robots: bool | None = None,
+) -> list[dict]:
+    """出先で書き留めたものを原文層に入れる。
+
+    ブラウザから持ち帰った `{kind, title, body}` の並びを受け取る。
+    kind は url（取得する）／text（本文の貼り付け）／note（メモ）。
+    **知識層には入れない**。入れるのは原文層までで、主張にするかは
+    通常どおり propose を通す（確認状態の決まり方を変えないため）。
+    """
+    out: list[dict] = []
+    for e in entries:
+        kind = (e.get("kind") or "note").strip()
+        body = (e.get("body") or "").strip()
+        title = (e.get("title") or "").strip()
+        if not body:
+            out.append({"error": "中身が空です", "entry": e})
+            continue
+        try:
+            if kind == "url":
+                r = ingest_url(store, body, title=title or None,
+                               respect_robots=respect_robots)
+            elif kind == "text":
+                r = ingest_text(store, body, kind="manual",
+                                title=title or "持ち帰った資料",
+                                note="ブラウザの持ち帰りから取り込み")
+            else:
+                r = ingest_text(store, body, kind="manual",
+                                title=title or "持ち帰ったメモ",
+                                note="ブラウザの持ち帰りから取り込み（メモ）")
+        except Exception as ex:
+            out.append({"error": str(ex), "entry": e})
+            continue
+        out.append({**r, "kind_in": kind})
+    store.log("import_inbox", {"entries": len(entries), "ok": sum(1 for r in out if "error" not in r)})
+    return out
+
+
 def refetch_sources(
     store: WorkStore, *, source_ids: Sequence[int] | None = None, only_periodic: bool = True
 ) -> list[dict]:
