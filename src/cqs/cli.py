@@ -407,10 +407,44 @@ def cmd_claim_verify(args: argparse.Namespace) -> None:
 
 def cmd_restate(args: argparse.Namespace) -> None:
     with _store(args) as st:
+        # APIキーが無くても使える道。出したプロンプトを手元のAIチャットに貼り、
+        # 返ってきたJSONを --apply で取り込む。
+        if args.prompt:
+            ps = restate.prompts(st, args.source_version_id, size=args.chunk)
+            if args.part:
+                if not 1 <= args.part <= len(ps):
+                    raise SystemExit(f"塊は 1〜{len(ps)} で指定してください")
+                print(ps[args.part - 1])
+                return
+            for i, text in enumerate(ps, 1):
+                print(f"===== 塊 {i}/{len(ps)} =====\n{text}\n")
+            print(f"# {len(ps)}個。AIチャットに貼り、返ったJSON配列を次で取り込みます:\n"
+                  f"#   cqs -w {args.work} restate {args.source_version_id} --apply out.json")
+            return
+        if args.apply:
+            raw = _read_input(args.apply, None)
+            try:
+                items = json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise SystemExit(f"JSONとして読めません: {e}")
+            if isinstance(items, dict):
+                items = [items]
+            # 塊ごとの配列をまとめて渡されても受ける
+            flat = []
+            for x in items:
+                flat.extend(x) if isinstance(x, list) else flat.append(x)
+            r = restate.apply(st, args.source_version_id, flat)
+            ids = restate.register_restated(st, args.source_version_id, r["proposals"])
+            _out(args, {"claim_ids": ids, "dropped": r["dropped"]},
+                 f"{len(ids)}件を主張として登録しました"
+                 + (f"（原文に根拠が無いなどで {len(r['dropped'])} 件を捨てました）"
+                    if r["dropped"] else ""))
+            return
         if not llm.available():
             raise SystemExit(
-                "LLMが設定されていません。言い直しにはLLMが要ります（docs/llm.md）。\n"
-                "機械的な文分割で足りる出典には cqs propose を使ってください。")
+                "LLMが設定されていません（docs/llm.md）。\n"
+                "キーが無い場合は --prompt でプロンプトを出し、手元のAIチャットに貼って、\n"
+                "返ってきたJSONを --apply で取り込んでください。")
         rows = restate.restate_version(
             st, args.source_version_id, size=args.chunk, max_chunks=args.max_chunks)
         if args.register:
@@ -707,6 +741,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--chunk", type=int, default=3000, help="一度にLLMへ渡す文字数")
     sp.add_argument("--max-chunks", type=int, default=None, help="試すときの塊数の上限")
     sp.add_argument("--register", action="store_true", help="そのまま主張として登録する")
+    sp.add_argument("--prompt", action="store_true",
+                    help="APIキーを使わず、AIチャットに貼るプロンプトを出す")
+    sp.add_argument("--part", type=int, help="--prompt のとき、その塊だけを出す")
+    sp.add_argument("--apply", metavar="FILE",
+                    help="AIチャットが返したJSONを取り込む（- で標準入力）")
     sp.set_defaults(func=cmd_restate)
 
     cp = sub.add_parser("claim", help="主張の登録・関係付け")

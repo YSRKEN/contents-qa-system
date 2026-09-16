@@ -18,6 +18,10 @@
 言い直しはLLMに任せるが、**確認状態は出典種別からの機械的規則のまま**にする
 （設計上の決めごと）。作り話を防ぐため、各主張には原文の一節をそのまま写した
 `locator` を返させ、原文に無ければその主張を捨てる。
+
+APIキーが無くても使える。`prompts()` が出すプロンプトを手元のAIチャット
+（Claude Code、ChatGPTなど）に貼り、返ってきたJSONを `apply()` に渡せばよい。
+キーがあるなら `restate_version()` が同じことを自動で行う。
 """
 
 from __future__ import annotations
@@ -88,6 +92,17 @@ def _entity_names(store: WorkStore) -> list[str]:
     return [e["name"] for e in store.list_entities() if (e["claims"] or 0) or e["kind"] == "character"]
 
 
+def _names_in(chunk: str, names: Sequence[str]) -> list[str]:
+    """その塊に実際に出てくる名前だけを渡す。
+
+    作品全体の一覧（数百件）をそのまま渡すと、プロンプトの大半が一覧で埋まり、
+    その場面と関係のない名前を選ばせる誘いにもなる。別名でも当たるように
+    空白の違いは無視して見る。
+    """
+    flat = textutil.flatten(chunk)
+    return [n for n in names if n in chunk or textutil.flatten(n) in flat]
+
+
 def restate_version(
     store: WorkStore, version_id: int, *, size: int = 3000, model: str | None = None,
     max_chunks: int | None = None,
@@ -105,7 +120,7 @@ def restate_version(
         parts = parts[:max_chunks]
     for offset, chunk in parts:
         got = llm.chat_json(
-            _PROMPT.format(title=title, entities="、".join(names), chunk=chunk),
+            _PROMPT.format(title=title, entities="、".join(_names_in(chunk, names)), chunk=chunk),
             max_tokens=4000, model=model,
         )
         if not isinstance(got, list):
@@ -146,6 +161,57 @@ def _find(text: str, needle: str) -> int | None:
             index.append(i)
     at = "".join(flat).find(flat_needle)
     return index[at] if at >= 0 else None
+
+
+def prompts(store: WorkStore, version_id: int, *, size: int = 3000) -> list[str]:
+    """LLMに渡すプロンプトを、塊ごとに作って返す。
+
+    APIキーが無い環境のための道。出したプロンプトを手元のAIチャットに貼り、
+    返ってきたJSONを apply() に渡す。キーがあるかどうかで結果は変わらない。
+    """
+    v = store.get_version(version_id)
+    if not v:
+        raise ValueError(f"出典版が見つかりません: {version_id}")
+    names = _entity_names(store)
+    title = store.meta.get("title", "")
+    return [_PROMPT.format(title=title, entities="、".join(_names_in(chunk, names)), chunk=chunk)
+            for _, chunk in chunks(v["text"], size=size)]
+
+
+def apply(store: WorkStore, version_id: int, items: Sequence[dict]) -> dict:
+    """AIチャットが返したJSONを取り込む。原文に無い根拠のものは捨てる。
+
+    返り値: {"proposals": 採ったもの, "dropped": 捨てたもの}
+    """
+    v = store.get_version(version_id)
+    if not v:
+        raise ValueError(f"出典版が見つかりません: {version_id}")
+    names = set(_entity_names(store))
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            dropped.append({"item": item, "why": "形が違う"})
+            continue
+        text = str(item.get("text") or "").strip()
+        locator = str(item.get("locator") or "").strip()
+        if not text or not locator:
+            dropped.append({"item": item, "why": "text か locator が空"})
+            continue
+        at = _find(v["text"], locator)
+        if at is None:
+            dropped.append({"item": item, "why": "根拠の一節が原文に無い"})
+            continue
+        key = textutil.flatten(text)
+        if key in seen:
+            dropped.append({"item": item, "why": "同じ主張が既にある"})
+            continue
+        seen.add(key)
+        kept.append({"text": text, "locator": locator, "offset": at,
+                     "entities": [str(x) for x in (item.get("entities") or []) if str(x) in names]})
+    kept.sort(key=lambda c: c["offset"])
+    return {"proposals": kept, "dropped": dropped}
 
 
 def register_restated(

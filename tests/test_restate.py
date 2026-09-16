@@ -115,3 +115,43 @@ def test_登録済みのエンティティ名だけを対象にする(store, fak
         "entities": ["白草四音", "存在しない人"]}], ensure_ascii=False)
     got = restate.restate_version(store, _version(store))
     assert got[0]["entities"] == ["白草四音"]
+
+
+def test_キーが無くてもプロンプトを出せる(store, monkeypatch):
+    """APIキーの無い環境のための道。プロンプトには原文がそのまま入る。"""
+    monkeypatch.setenv("CQS_LLM_PROVIDER", "none")
+    ps = restate.prompts(store, _version(store))
+    assert ps and "アイドルとしての才能は欠片もない。" in ps[0]
+
+
+def test_貼って返したJSONを取り込んでも結果は同じ(store, fake_llm):
+    """--prompt → 手元のチャット → --apply の道と、キーで自動に走らせた道が一致する。"""
+    reply = [{
+        "text": "白草四音は葛城リーリヤに「アイドルとしての才能は欠片もない。」と告げた。",
+        "locator": "アイドルとしての才能は欠片もない。",
+        "entities": ["白草四音", "葛城リーリヤ"],
+    }]
+    fake_llm.reply = json.dumps(reply, ensure_ascii=False)
+    v = _version(store)
+    auto = restate.restate_version(store, v)
+    hand = restate.apply(store, v, reply)["proposals"]
+    assert hand == auto
+
+
+def test_取り込みでも原文に無い根拠は捨てる(store):
+    """貼って返ってきたものにも、自動のときと同じ検査を掛ける。"""
+    v = _version(store)
+    r = restate.apply(store, v, [
+        {"text": "白草四音は葛城リーリヤを励ました。", "locator": "がんばってください。"},
+        {"text": "白草四音は極月学園の1年生である。", "locator": "極月学園の1年生。"},
+    ])
+    assert [c["text"] for c in r["proposals"]] == ["白草四音は極月学園の1年生である。"]
+    assert len(r["dropped"]) == 1
+
+
+def test_その塊に出てこない名前はプロンプトに載せない(store, monkeypatch):
+    """作品全体の一覧を渡すと、その場面と関係のない名前を選ばせる誘いになる。"""
+    monkeypatch.setenv("CQS_LLM_PROVIDER", "none")
+    store.ensure_entity("月村手毬", kind="character")
+    text = restate.prompts(store, _version(store))[0]
+    assert "白草四音" in text and "月村手毬" not in text
