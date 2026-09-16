@@ -176,3 +176,14 @@ def test_segment_can_be_set_by_hand_and_rules_applied_later(store):
     assert store.get_source(sid)["segment"] == "外伝ゲーム"
     store.set_source_segment(sid, None)
     assert store.get_source(sid)["segment"] is None
+
+
+def test_取り直して題名が変わったら出典の題名も変わる(store):
+    """出典一覧の表示と、回答時の「題名が検索語を含む出典を押す」判定に効く。"""
+    a = store.add_source(url="https://example.com/x", kind="article", title="古い題名")
+    b = store.add_source(url="https://example.com/x", kind="article", title="新しい題名")
+    assert a == b
+    assert store.get_source(a)["title"] == "新しい題名"
+    # 題名を渡さない取り込みは、いまの題名を消さない
+    store.add_source(url="https://example.com/x", kind="article")
+    assert store.get_source(a)["title"] == "新しい題名"

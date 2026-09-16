@@ -557,6 +557,16 @@ def classify_seesaa(store, title: str, characters: set[str]) -> str:
     return "イベント・サポカコミュ"      # サポートカードの個別ページ
 
 
+# 一覧・履歴・ギャラリーなどの索引ページはカード名ではない。区切りを含む題名
+# （「定期公演『初』/篠澤広」）も個別カードではない。題名の切り出しに失敗した
+# ページ（「… - 学園アイドルマスターwiki」が残る）もここで落ちる。
+_NOT_A_CARD = re.compile(r"(一覧|履歴|ギャラリー|攻略|雛形|集|ランキング)$|/| - ")
+
+
+def _looks_like_card(title: str) -> bool:
+    return bool(title) and not _NOT_A_CARD.search(title)
+
+
 def harvest_entities(store) -> dict[str, int]:
     """seesaawiki のページ名と楽曲一覧から、カード名・サポカ名・イベント名・曲名を拾う。
 
@@ -580,7 +590,7 @@ def harvest_entities(store) -> dict[str, int]:
             found["event"].add(t[len("イベント/"):])
         elif m := re.match(r"^【(.+?)】", t):
             found["card"].add(m.group(1))
-        else:
+        elif _looks_like_card(t):
             found["card"].add(t)          # サポートカードの個別ページ
     for name in re.findall(r"曲名: (.+?) / 作詞", songs_text):
         found["song"].add(name.rstrip("?"))   # 未作成リンクの「?」を落とす

@@ -78,14 +78,40 @@ def _decode(raw: bytes, content_type: str) -> str:
         m = re.search(r'charset=["\']?([\w\-]+)', head, re.I)
         if m:
             charset = m.group(1)
-    for enc in [charset, "utf-8", "cp932", "euc-jp"]:
-        if not enc:
-            continue
+    for enc in _codecs_for(charset):
         try:
             return raw.decode(enc)
         except (UnicodeDecodeError, LookupError):
             continue
-    return raw.decode("utf-8", "replace")
+    # 宣言があるなら、その系統で読めない字だけを落とす。ここで無関係な符号化に
+    # 乗り換えると、EUC-JPの本文がcp932として「成功」して全文が化ける。
+    fallback = next(iter(_codecs_for(charset)), None) if charset else None
+    return raw.decode(fallback or "utf-8", "replace")
+
+
+# 宣言された符号化の別名と、同じ系統で範囲の広いもの。日本語のページは
+# 宣言がEUC-JPでも、機種依存文字（NEC・IBM拡張）が混ざって厳密なEUC-JPでは読めない。
+_CODEC_FAMILY = {
+    "euc-jp": ["eucjp_ms", "euc_jis_2004", "euc_jp"],
+    "eucjp": ["eucjp_ms", "euc_jis_2004", "euc_jp"],
+    "x-euc-jp": ["eucjp_ms", "euc_jis_2004", "euc_jp"],
+    "shift-jis": ["cp932", "shift_jis_2004", "shift_jis"],
+    "shift_jis": ["cp932", "shift_jis_2004", "shift_jis"],
+    "sjis": ["cp932", "shift_jis_2004", "shift_jis"],
+    "x-sjis": ["cp932", "shift_jis_2004", "shift_jis"],
+    "ms_kanji": ["cp932", "shift_jis_2004", "shift_jis"],
+    "iso-2022-jp": ["iso2022_jp_2004", "iso2022_jp_3", "iso2022_jp"],
+}
+
+
+def _codecs_for(charset: str | None) -> list[str]:
+    """試す符号化の順。宣言があればその系統だけ、無ければ日本語圏の定番を順に。"""
+    if not charset:
+        return ["utf-8", "cp932", "eucjp_ms"]
+    key = charset.strip().lower().replace("_", "-")
+    if key in ("utf8", "utf-8"):
+        return ["utf-8"]
+    return _CODEC_FAMILY.get(key) or _CODEC_FAMILY.get(key.replace("-", "_")) or [charset]
 
 
 def _decompress_partial(raw: bytes, encoding: str) -> bytes:

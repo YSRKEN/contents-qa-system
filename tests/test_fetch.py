@@ -64,3 +64,26 @@ def test_render_snapshot_handles_fxtwitter_json():
 def test_render_snapshot_handles_html():
     text, title = fetch.render_snapshot("<html><head><title>作品</title></head><body><p>本文。</p></body></html>")
     assert text == "本文。" and title == "作品"
+
+
+def test_宣言された符号化で読めない字があっても別系統に乗り換えない():
+    """EUC-JPの本文がcp932として「成功」すると、全文が化けたまま保存される。
+
+    日本語のページは、宣言がEUC-JPでも機種依存文字が混ざって
+    厳密なEUC-JPでは読めないことがある。同じ系統の広いほうで読む。
+    """
+    body = "学園アイドルマスター".encode("euc_jp") + b"\xad\xb5"   # NEC拡張（丸数字）
+    text = fetch._decode(b'<meta charset="EUC-JP">' + body, "text/html")
+    assert "学園アイドルマスター" in text
+    assert "�" not in text
+
+
+def test_宣言が無ければ日本語圏の定番を順に試す():
+    assert fetch._codecs_for(None)[0] == "utf-8"
+    assert fetch._decode("あいう".encode("utf-8"), "text/html") == "あいう"
+
+
+def test_宣言された符号化の別名をたどる():
+    assert "cp932" in fetch._codecs_for("Shift_JIS")
+    assert "eucjp_ms" in fetch._codecs_for("euc-jp")
+    assert fetch._codecs_for("utf-8") == ["utf-8"]

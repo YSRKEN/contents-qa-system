@@ -231,8 +231,15 @@ class WorkStore:
         if kind not in SOURCE_KINDS:
             raise StoreError(f"未知の出典種別: {kind}（有効: {', '.join(SOURCE_KINDS)}）")
         if url:
-            row = self.conn.execute("SELECT id FROM sources WHERE url = ?", (url,)).fetchone()
+            row = self.conn.execute(
+                "SELECT id, title FROM sources WHERE url = ?", (url,)).fetchone()
             if row:
+                # 取り直して題名が変わっていたら反映する。出典一覧の表示と、
+                # 回答時の「題名が検索語を含む出典を押す」判定に効く
+                if title and title != row["title"]:
+                    self.conn.execute(
+                        "UPDATE sources SET title = ? WHERE id = ?", (title, int(row["id"])))
+                    self.conn.commit()
                 return int(row["id"])
         cur = self.conn.execute(
             "INSERT INTO sources(url, kind, title, note, refetch, segment, created_at) "
