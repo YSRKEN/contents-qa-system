@@ -21,6 +21,7 @@ import argparse
 import html
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -56,6 +57,8 @@ KIND_RULES = [
     ("s.mxtv.jp", "official_site"),
     ("ja.wikipedia.org", "wiki_index"),
     ("gamerch.com/gakumasu", "wiki_index"),
+    ("seesaawiki.jp/gakumasu", "wiki_index"),
+    ("note.com/makura_1210", "fan_chronicle"),
     ("denfaminicogamer.jp", "interview"),
     ("famitsu.com", "article"),
     ("4gamer.net", "article"),
@@ -79,6 +82,7 @@ SEGMENT_RULES = [
     ("gakuen.idolmaster-official.jp", "作品全体"),
     ("ja.wikipedia.org", "作品全体"),
     ("gamerch.com/gakumasu", "ゲームシステム"),
+    ("note.com/makura_1210", "親愛度コミュ"),
     ("technote.qualiarts.jp", "制作・現実側"),
     ("developers.cyberagent.co.jp", "制作・現実側"),
     ("www.qualiarts.jp", "制作・現実側"),
@@ -252,6 +256,61 @@ WIKI_SYSTEM = [
 ]
 WIKI_BASE = "https://gamerch.com/gakumasu/"
 
+# 非公式wiki（seesaawiki）。人物ページに STEP1〜4 の構成・紹介文・親愛度の解放条件・
+# 交友関係・家族関係・好物が、出どころ付きで並んでいる。本文はEUC-JP、URLもEUC-JPで
+# パーセント符号化する。ページ一覧は100件で頭打ちなので、名前を控えて持つ。
+SEESAA_BASE = "https://seesaawiki.jp/gakumasu/d/"
+SEESAA_PAGES = [
+    "【標】有村麻央", "【ガラクタロード】十王星南", "【「ねえ、言っちゃうよ。」】秦谷美鈴",
+    "もうすぐ本番ですね", "【ときめきエモーション】葛城リーリヤ", "【冠菊】葛城リーリヤ",
+    "用語集", "スキルカード一覧/Pアイドル固有", "プロデュースカード雛形",
+    "【「ねえ、言っちゃうよ。」】十王星南", "H.I.F", "【「ねえ、言っちゃうよ。」】月村手毬",
+    "おやすみのふたり", "【赤裸々】十王星南", "【自己肯定感爆上げ↑↑しゅきしゅきソング】藤田ことね",
+    "プロデューサーランキング", "【一体いつから】月村手毬", "楽曲一覧",
+    "owl", "村雨愁佳", "MenuBar1",
+    "トップページ", "学マス公式配信", "小ネタ集",
+    "【真っ白いページと水彩の主人公】花海佑芽", "アイドルへの道", "イベント/さいごの文化祭",
+    "【ENDLESS DANCE】花海佑芽", "【ENDLESS DANCE】十王星南", "サポートカード一覧",
+    "アチーブメント", "プロデュースアイドル固有早見表", "Pアイテム一覧",
+    "十王星南", "プロデュースアイドル一覧", "ガシャ一覧",
+    "Pドリンク一覧", "N.I.A/親愛度/好印象", "イクラ〜♪　ウニ〜♪",
+    "ぜったいに取るんだ！", "【ときめきエモーション】紫雲清夏", "次の曲は〜ッあの曲だ！！",
+    "インタビューお願いします", "食レポ、得意かも！", "スキルカード一覧",
+    "奇遇な必然", "姫崎莉波", "花海咲季",
+    "花海佑芽", "秦谷美鈴", "篠澤広",
+    "紫雲清夏", "倉本千奈", "葛城リーリヤ",
+    "有村麻央", "雨夜燕", "藤田ことね",
+    "月村手毬", "こんにゃくなきもだめし", "【Yellow Big Bang！】藤田ことね",
+    "【L.U.V】姫崎莉波", "【グースーピー】花海佑芽", "【Superlative】秦谷美鈴",
+    "【Our Chant】十王星南", "【コントラスト】篠澤広", "【カクシタワタシ】紫雲清夏",
+    "【日々、発見的ステップ！】倉本千奈", "【極光】葛城リーリヤ", "【Feel Jewel Dream】有村麻央",
+    "【アイヴイ】月村手毬", "【Boom Boom Pow】花海咲季", "Q&A",
+    "イベント/毎日学マ水曜日 ファイナルシーズン", "プロデュースアイドル", "1人たりとも欠ける事なく",
+    "キラキラして綺麗〜っ！", "ふわふわでワクワク", "サポートカード",
+    "プロデュースって大変ね", "盛り上げてこー！", "お母さんか！",
+    "わたしと美鈴、超仲良し", "【GO MY WAY!!】花海咲季", "オシャレもメイクも♪",
+    "【がむしゃらに行こう！】藤田ことね", "【White Night! White Wish!】藤田ことね", "【キミとセミブルー】有村麻央",
+    "さあ、もう一戦！", "みいつけた。", "バレンタイン&#9825;会議中ーっ！",
+    "ゆるるんあくび顔", "イベント/十王邦夫のアイドル強化月間〜星々のきらめき〜", "パーティー楽しみだねっ！",
+    "【Wildest Flower】花海咲季", "ショップ", "【標】紫雲清夏",
+    "【標】倉本千奈", "定期公演『初』/レジェンド", "レッスン・試験詳細",
+    "【クライアイ】雨夜燕", "プロデュースについて", "プロデュースメモリー",
+    "イベント一覧", "定期公演『初』", "十王邦夫",
+    "根緒亜紗里",
+]
+
+# 親愛度コミュのあらすじ（話数・台詞つき）。解釈ではなく本編の読み取りなので fan_chronicle。
+# 10名 × STEP1〜3。姫崎莉波・秦谷美鈴・雨夜燕ぶんはまだ無い。
+NOTE_BASE = "https://note.com/makura_1210/n/"
+NOTE_KEYS = [
+    "n70c9ba38e690", "n9cd66403d880", "n71b0cc38d94e", "n6ae46b0d3e45", "nf4d169551f03",
+    "n55bd15fed1e7", "n8cdd556dfd1b", "n1ed1461283a5", "nd90bcf725d62", "n49e9b84aff30",
+    "nfac53a9147be", "nce01de2422a2", "n0ecec95d6083", "n1d7f53da7404", "necd2dc543073",
+    "n4692c6aaaa92", "nabea699c6dbb", "n4f89a9053479", "nffd644530bbc", "nd83436cd34ab",
+    "n70452827af9b", "n9f5af571a272", "nae5f15393e72", "n0901c3640860", "nae1e9c2e4c6f",
+    "n98c7ffabce49", "n944c07284177", "n4a49228e7d17", "n286ec6c73e46", "nb44ad0be5b5c",
+]
+
 
 def _text(fragment: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
@@ -319,6 +378,118 @@ def surface_map(store) -> dict[str, str]:
         for a in e.get("aliases", ()):
             m.setdefault(a, e["name"])
     return m
+
+
+# 人物について書かれたページ。ページ全体が1人の記述なので、本文には名前が出ない。
+# 「広にとっては『初めてできた友達』。」のような文は、題名を見ないと誰の話か分からない。
+SUBJECT_PATTERNS = [
+    # seesaawiki の人物ページ（題名がそのまま人物名）
+    (re.compile(r"^(.+?) - 学園アイドルマスターwiki"), 1),
+    # note の親愛度コミュ振り返り（「…振り返り│篠澤広・STEP2｜まくら」）
+    (re.compile(r"振り返り│(.+?)・STEP"), 1),
+]
+
+
+def subject_of(store, title: str | None) -> str | None:
+    """その出典が誰について書かれたものかを、題名から決める。"""
+    if not title:
+        return None
+    for pattern, group in SUBJECT_PATTERNS:
+        m = pattern.search(title)
+        if not m:
+            continue
+        name = m.group(group).strip()
+        e = store.resolve_entity(name)
+        if e and e["kind"] == "character":
+            return str(e["name"])
+    return None
+
+
+def ingest_subject_page(store, version_id: int, canonical: str) -> int:
+    """1人について書かれたページの文を、その人物に帰属させて登録する。
+
+    自動抽出に任せると、本文に名前が出ない文が落ちるか、
+    たまたま同じ文に出てきた別の名前だけに紐づいてしまう。
+    """
+    if has_claims(store, version_id):
+        return 0
+    v = store.get_version(version_id)
+    surfaces = surface_map(store)
+    n = 0
+    from cqs import extract
+
+    for c in extract.dedupe(extract.candidate_sentences(v["text"], entities=list(surfaces))):
+        if extract.in_reference_section(c["section"]):
+            continue
+        ents = sorted({surfaces[s] for s in c["entities"]} | {canonical})
+        head = f"{c['section']}: " if c["section"] else ""
+        store.add_claim(
+            text=f"{canonical} / {head}{c['text']}",
+            source_version_id=version_id, entities=ents, locator=c["text"],
+            offset=c["offset"], note="その人物について書かれたページより",
+        )
+        n += 1
+    return n
+
+
+# seesaawiki のページ名から区分（シナリオ種別）を決める。URLがEUC-JPの符号なので題名で見る。
+SEESAA_SYSTEM = {
+    "用語集", "アチーブメント", "ショップ", "ガシャ一覧", "サポートカード", "サポートカード一覧",
+    "プロデュースアイドル", "プロデュースアイドル一覧", "プロデュースアイドル固有早見表",
+    "プロデュースカード雛形", "プロデュースについて", "プロデュースメモリー",
+    "Pアイテム一覧", "Pドリンク一覧", "レッスン・試験詳細", "アイドルへの道",
+    "N.I.A/親愛度/好印象", "プロデューサーランキング", "MenuBar1", "トップページ",
+}
+SEESAA_WHOLE = {"楽曲一覧", "学マス公式配信", "小ネタ集", "Q&A", "イベント一覧"}
+
+
+def seesaa_title(version) -> str:
+    return ((version["title"] or "") if version else "").split(" - 学園アイドルマスターwiki")[0].strip()
+
+
+def classify_seesaa(store, title: str, characters: set[str]) -> str:
+    if title.startswith("イベント/") or title.startswith("【"):
+        return "イベント・サポカコミュ"
+    if title.startswith(("定期公演『初』", "H.I.F")):
+        return "初星シナリオ"
+    if title in SEESAA_SYSTEM or title.startswith("スキルカード一覧"):
+        return "ゲームシステム"
+    if title in SEESAA_WHOLE or title in characters:
+        return "作品全体"
+    return "イベント・サポカコミュ"      # サポートカードの個別ページ
+
+
+def harvest_entities(store) -> dict[str, int]:
+    """seesaawiki のページ名と楽曲一覧から、カード名・サポカ名・イベント名・曲名を拾う。
+
+    抽出は登録済みの名前しか拾わないので、主張を作る前に入れておく必要がある。
+    「初」「標」「見て」のように他の語の一部になる名前は、何にでも当たるので入れない。
+    """
+    too_short = {"初", "標", "見て", "ふわふわ"}
+    characters = {e["name"] for e in store.list_entities() if e["kind"] == "character"}
+    found = {"card": set(), "event": set(), "song": set()}
+    songs_text = ""
+    for src in store.list_sources():
+        if "seesaawiki.jp/gakumasu" not in (src["url"] or ""):
+            continue
+        v = store.latest_version(src["id"])
+        t = seesaa_title(v)
+        if t == "楽曲一覧":
+            songs_text = v["text"]
+        if not t or t in SEESAA_SYSTEM or t in SEESAA_WHOLE or t in characters:
+            continue
+        if t.startswith("イベント/"):
+            found["event"].add(t[len("イベント/"):])
+        elif m := re.match(r"^【(.+?)】", t):
+            found["card"].add(m.group(1))
+        else:
+            found["card"].add(t)          # サポートカードの個別ページ
+    for name in re.findall(r"曲名: (.+?) / 作詞", songs_text):
+        found["song"].add(name.rstrip("?"))   # 未作成リンクの「?」を落とす
+    for kind, names in found.items():
+        for n in names - too_short - characters:
+            store.ensure_entity(n, kind=kind)
+    return {k: len(v - too_short - characters) for k, v in found.items()}
 
 
 def has_claims(store, version_id: int) -> bool:
@@ -416,6 +587,8 @@ def main() -> int:
         else:
             urls = [BASE + p for p in OTHER_PATHS + [q for q, _ in IDOL_PATHS]]
             urls += [WIKIPEDIA] + [f"{WIKI_BASE}{i}" for i in WIKI_SYSTEM]
+            urls += [SEESAA_BASE + urllib.parse.quote(n.encode("euc_jp")) for n in SEESAA_PAGES]
+            urls += [NOTE_BASE + k for k in NOTE_KEYS]
             for url in urls:
                 try:
                     r = ingest.ingest_url(store, url, respect_robots=args.robots)
@@ -439,6 +612,14 @@ def main() -> int:
             if any(pat in (s["url"] or "") for pat in ENTITY_ONLY):
                 store.set_source_extract(int(s["id"]), "entity_only")
 
+        characters = {e["name"] for e in store.list_entities() if e["kind"] == "character"}
+        for s in store.list_sources():
+            if "seesaawiki.jp/gakumasu" not in (s["url"] or ""):
+                continue
+            t = seesaa_title(store.latest_version(s["id"]))
+            store.set_source_segment(int(s["id"]), classify_seesaa(store, t, characters))
+        print("拾ったエンティティ: " + ", ".join(f"{k} {n}" for k, n in harvest_entities(store).items()))
+
         total = 0
         for p, canonical in IDOL_PATHS:
             vid = by_url.get(BASE + p)
@@ -448,8 +629,19 @@ def main() -> int:
             total += ingest_idol_page(store, vid, canonical)
         print(f"学園名簿から {total} 件の主張を登録しました")
 
-        # 学園名簿以外は自動抽出に回す。公式の告知や一覧は人物名を含まない文も意味を持つ
+        # 1人について書かれたページは、題名の人物に帰属させて登録する
         idol_versions = {by_url.get(BASE + p) for p, _ in IDOL_PATHS}
+        subject = 0
+        for s in store.list_sources():
+            v = store.latest_version(s["id"])
+            if not v or int(v["id"]) in idol_versions:
+                continue
+            who = subject_of(store, v["title"])
+            if who:
+                subject += ingest_subject_page(store, int(v["id"]), who)
+        print(f"人物ページから {subject} 件の主張を登録しました")
+
+        # 残りは自動抽出に回す。公式の告知や一覧は人物名を含まない文も意味を持つ
         n = 0
         for s in store.list_sources():
             v = store.latest_version(s["id"])
