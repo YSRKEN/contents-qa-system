@@ -13,7 +13,7 @@ import sys
 from typing import Any
 
 from . import answer as answer_mod
-from . import config, ingest
+from . import config, ingest, llm, restate
 from .constants import SOURCE_KINDS, VERIFICATIONS, kind_label
 from .store import StoreError, WorkStore
 
@@ -405,6 +405,29 @@ def cmd_claim_verify(args: argparse.Namespace) -> None:
         _out(args, {"ok": True}, f"claim {args.claim_id} の確認状態を {args.verification} にしました")
 
 
+def cmd_restate(args: argparse.Namespace) -> None:
+    with _store(args) as st:
+        if not llm.available():
+            raise SystemExit(
+                "LLMが設定されていません。言い直しにはLLMが要ります（docs/llm.md）。\n"
+                "機械的な文分割で足りる出典には cqs propose を使ってください。")
+        rows = restate.restate_version(
+            st, args.source_version_id, size=args.chunk, max_chunks=args.max_chunks)
+        if args.register:
+            ids = restate.register_restated(st, args.source_version_id, rows)
+            _out(args, {"claim_ids": ids},
+                 f"{len(ids)}件を主張として登録しました: {ids[:10]}{'…' if len(ids) > 10 else ''}")
+            return
+        if args.json:
+            _out(args, rows)
+            return
+        for i, c in enumerate(rows, 1):
+            ents = f"  [{', '.join(c['entities'])}]" if c["entities"] else ""
+            print(f"{i:3d}. {c['text']}{ents}")
+            print(f"     原文: {c['locator'][:60]}  （位置 {c['offset']}）")
+        print(f"\n{len(rows)}件。登録するには --register を付けてください。")
+
+
 def cmd_propose(args: argparse.Namespace) -> None:
     with _store(args) as st:
         if args.register:
@@ -678,6 +701,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--require-entity", action="store_true",
                     help="--register 時、エンティティに触れる文だけを登録する")
     sp.set_defaults(func=cmd_propose)
+
+    sp = sub.add_parser("restate", help="原文から、独立して読める主張を起こす（LLMが要る）")
+    sp.add_argument("source_version_id", type=int)
+    sp.add_argument("--chunk", type=int, default=3000, help="一度にLLMへ渡す文字数")
+    sp.add_argument("--max-chunks", type=int, default=None, help="試すときの塊数の上限")
+    sp.add_argument("--register", action="store_true", help="そのまま主張として登録する")
+    sp.set_defaults(func=cmd_restate)
 
     cp = sub.add_parser("claim", help="主張の登録・関係付け")
     csub = cp.add_subparsers(dest="claim_command", required=True)
