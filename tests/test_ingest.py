@@ -169,3 +169,27 @@ def test_extract_mode_overrides_the_kind_default(store):
     store.set_source_extract(sid, "entity_only")
     got = [c["text"] for c in ingest.propose_claims(store, v.version_id)]
     assert got == ["映画『超かぐや姫！』ではかぐやを演じた。"]
+
+
+def test_cli_register_leaves_the_decision_to_the_source_kind(store, monkeypatch, capsys):
+    """`propose --register` が出典種別の既定を上書きしないこと。
+
+    ここで常に「エンティティに触れる文だけ」を渡すと、Wikiや公式サイトから
+    用語・設定の説明が丸ごと落ちる。
+    """
+    import argparse
+
+    from cqs import cli
+
+    store.ensure_entity("かぐや")
+    sid = store.add_source(url="https://ja.wikipedia.org/wiki/x", kind="wiki_index", title="記事")
+    v = store.add_version(sid, text="かぐやは月から来た。\n\n月には都があるとされる。\n", title="記事")
+    monkeypatch.setattr(cli.config, "open_work", lambda slug: store)
+    monkeypatch.setattr(store, "close", lambda: None)
+
+    args = argparse.Namespace(work="w", json=False, source_version_id=v.version_id,
+                              entity=None, limit=50, register=True,
+                              allow_no_entity=False, require_entity=False)
+    cli.cmd_propose(args)
+    got = {c["text"] for c in store.search_claims(limit=50)}
+    assert "月には都があるとされる。" in got

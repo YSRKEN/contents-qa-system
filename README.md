@@ -70,6 +70,23 @@ cqs -w <作品> segment list                                  # 区分ごとの�
 区分の付いた主張があると、回答時に「区分の違う主張を、区分を伏せたまま同じ作品の事実として
 並べない」という制約が入り、UIでは絞り込みとバッジに出ます。1作品しか無ければ何も出ません。
 
+## APIキーが要るところ／要らないところ
+
+**取り込みと検索はすべてキー無しで動きます**。外部に出るのは取得先のサイトだけです。
+
+| | キー |
+|---|---|
+| 取得・抽出・登録（`fetch` `add-text` `propose` `claim` `entity` `segment` …） | 不要 |
+| 検索（`claims` `search` `show` `entity coverage` …） | 不要 |
+| 他AIの調査結果の照合（`add-report` `verify`） | 不要（URLを取得して語の一致を見るだけ） |
+| ブラウザUI（`cqs serve`）の閲覧・検索・登録 | 不要 |
+| `cqs ask` の**回答生成** | 要る。無ければ材料とプロンプトを出力するので、Claudeに貼れば同じ答えになる |
+| 質問の計画・次に訊けること | 要る。無ければ従来どおりの一発検索になる |
+| `images transcribe`（画像の読み取り） | 要る。`images save` で保存して自分で読めば代用できる |
+
+MCPサーバー経由（Claude Desktop / Claude Code）で使う場合も、キーは要りません。
+Claude側が検索ツールを呼び、回答はClaudeが書くためです。
+
 ## インストール
 
 Python 3.10以上。コア機能（CLI・Web UI）は標準ライブラリだけで動きます。
@@ -122,6 +139,16 @@ cqs -w 作品名 add-report --title "Deep Research結果" --file report.md
 cqs -w 作品名 candidates                 # 未照合の候補
 cqs -w 作品名 verify --limit 5           # URLを取得して照合（登録はしない）
 cqs -w 作品名 verify --limit 5 --promote 0.9   # 一致率0.9以上だけ自動登録
+```
+
+報告の書式は、**主張の後ろにURLが来る**形を読みます。URLが主張より前にあると紐づきません。
+
+```markdown
+- 竹取物語は現存する日本最古の物語とされる。
+  https://ja.wikipedia.org/wiki/竹取物語
+- 作者は不明である（[1]）。
+
+[1]: https://ja.wikipedia.org/wiki/竹取物語
 ```
 
 照合の一致率は目安です。たとえば公式サイトが「CV夏吉ゆうこ」と書いているとき、

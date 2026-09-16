@@ -380,9 +380,13 @@ def cmd_claim_verify(args: argparse.Namespace) -> None:
 def cmd_propose(args: argparse.Namespace) -> None:
     with _store(args) as st:
         if args.register:
+            # 指定が無ければ出典種別に任せる（参照系の出典は人物名の無い文も採る）。
+            # ここで常に True を渡すと、Wikiや公式サイトから用語・設定の説明が
+            # 丸ごと落ちる（--allow-no-entity を毎回付けないと拾えなくなる）。
+            require = False if args.allow_no_entity else (True if args.require_entity else None)
             ids = ingest.register_proposed(
                 st, args.source_version_id, entities=args.entity or (), limit=args.limit,
-                require_entity=not args.allow_no_entity,
+                require_entity=require,
             )
             _out(args, {"claim_ids": ids}, f"{len(ids)}件を主張として登録しました: {ids[:10]}{'…' if len(ids) > 10 else ''}")
             return
@@ -633,7 +637,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--entity", action="append")
     sp.add_argument("--limit", type=int, default=50)
     sp.add_argument("--register", action="store_true", help="候補をそのまま主張として登録する")
-    sp.add_argument("--allow-no-entity", action="store_true", help="--register 時、エンティティに触れない文も登録する")
+    sp.add_argument("--allow-no-entity", action="store_true",
+                    help="--register 時、エンティティに触れない文も登録する")
+    sp.add_argument("--require-entity", action="store_true",
+                    help="--register 時、エンティティに触れる文だけを登録する")
     sp.set_defaults(func=cmd_propose)
 
     cp = sub.add_parser("claim", help="主張の登録・関係付け")
