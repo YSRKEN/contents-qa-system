@@ -229,6 +229,25 @@ def _near_duplicate(a: set[str], b: set[str], threshold: float = 0.65) -> bool:
     return len(a & b) / min(len(a), len(b)) >= threshold
 
 
+# 表の行は「見出し: 値 / 見出し: 値」の形で畳まれている（textutil.render_table）。
+_TABLE_ROW = re.compile(r"[^/]+: [^/]+ / ")
+
+
+def informative_length(body: str) -> float:
+    """その主張が1つの当たりに対して持つ情報量を、長さで見積もる。
+
+    長い文ほど中身があるとみなしているが、表の行は例外になる。1行に項目が
+    いくつも畳まれているので長くなるだけで、当たった語に対応するのは
+    そのうち1項目でしかない。行の長さをそのまま使うと、物語の地の文
+    （1文ずつ短い）が、当たった語をたまたま含む一覧表の行に負ける。
+    """
+    n = len(body)
+    fields = len(_TABLE_ROW.findall(body)) + 1
+    if fields >= 3:
+        n = n / fields
+    return min(n, 120)
+
+
 def split_section(text: str) -> tuple[str, str]:
     """主張は「節見出し: 本文」の形で入っている。見出しと本文に分ける。"""
     head, sep, body = text.partition(": ")
@@ -389,7 +408,7 @@ def retrieve(
         # （割り引きは、名言集のように見出しが単なる帰属ラベルである場合のために、
         #   主張を1件ずつ並べる先頭の枠のほうで効かせる）
         weighted = {
-            c["id"]: topical.get(c["id"], sc) * min(len(split_section(c["text"])[1]), 120) / 60
+            c["id"]: topical.get(c["id"], sc) * informative_length(split_section(c["text"])[1]) / 60
             for sc, c in items
         }
         if not ids_of:
@@ -401,12 +420,26 @@ def retrieve(
         # 出典の優先順を効かせる。感想noteの節が公式・記事の節を押しのけないように
         return base * (0.5 + items[0][1].get("priority", 0) / 200)
 
+    # 質問が対象を名指ししているなら、その対象に触れていない群は節ごと読み込まない。
+    # 「NIAの際に白草四音が行った嫌がらせは？」のような質問では、「NIA」「行っ」の
+    # ような語が開発の記事に大量に当たり、名指しされた人物の出てくる場面が
+    # 枠の外へ押し出される。名指しは語の一致より強い手がかりなので、そちらを優先する。
+    named = set(ents)
+    about_named = {
+        key for key, items in by_group.items()
+        if any(named & set(c.get("entities") or ()) for _, c in items)
+    }
+    # ただし、名指しされた対象が数えるほどしか出てこないときは、絞ると材料が尽きる
+    focus = about_named if len(about_named) >= 4 else set(by_group)
+
     runs: list[dict] = []
     used_sources: list[int] = []
     taken = 0
     for key, items in sorted(by_group.items(), key=lambda kv: -group_score(kv[0], kv[1])):
         if taken >= run_budget:
             break
+        if key not in focus:
+            continue
         if len(items) < 2 and title_bonus(items) <= 0:
             continue
         ids = in_order.get(key[0], []) if key[1] == ALL_SECTIONS else in_section.get(key, [])

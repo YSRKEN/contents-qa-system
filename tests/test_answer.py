@@ -265,3 +265,16 @@ def test_a_brand_new_work_can_still_be_searched(store):
     cid = store.add_claim(text="卒業ライブの夜は満月だった。", source_version_id=v.version_id)
     got = [c["id"] for c in answer.retrieve(store, "満月の夜のこと")["claims"]]
     assert cid in got
+
+
+def test_畳んだ表の行は長さのわりに情報を持たない():
+    """表の行は「見出し: 値 / 見出し: 値」の形で長くなるが、当たった語に
+    対応するのはそのうち1項目でしかない。行の長さをそのまま重みにすると、
+    物語の地の文（1文ずつ短い）が、名前をたまたま含む一覧表に負ける。"""
+    row = ("レアリティ: SSR / カード名: 私を楽しませろ / "
+           "その他: 藍井撫子 白草四音 白草月花 黒井崇男 / 登場日: 2026/06/05")
+    line = "そこにいたのは白草四音でした。麻央を挑発してきます。"
+    assert len(row) > len(line) * 1.5                       # 見た目は表のほうが長い
+    assert answer.informative_length(row) < answer.informative_length(line)
+    # 項目の少ない行は、ふつうの文として扱う
+    assert answer.informative_length("名前: 白草四音") == len("名前: 白草四音")
