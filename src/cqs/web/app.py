@@ -71,10 +71,24 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(n).decode("utf-8"))
 
+    @staticmethod
+    def _repair(query: str) -> str:
+        """リクエスト行は latin-1 として読まれる。
+
+        ブラウザは非ASCIIをパーセントエンコードして送るのでそのままで通るが、
+        curl などで日本語をそのまま書くと生のUTF-8バイトが latin-1 として読まれ、
+        作品名が文字化けする。正しく符号化されたクエリはASCIIなので、
+        この往復は何も変えない。
+        """
+        try:
+            return query.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return query
+
     # --- ルーティング ---
     def do_GET(self) -> None:  # noqa: N802
         u = urlparse(self.path)
-        q = parse_qs(u.query)
+        q = parse_qs(self._repair(u.query))
         try:
             if u.path in ("/", "/index.html"):
                 return self._send_file(STATIC / "index.html", "text/html; charset=utf-8")
