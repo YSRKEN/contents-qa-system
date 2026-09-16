@@ -157,3 +157,28 @@ def test_answer_uses_an_openai_compatible_server(server, store, monkeypatch):
     r = answer.answer(store, "かぐやはどこから来た？", plan=False)
     assert r["answer"] == "こたえ"
     assert r["model"] == "fake-1"
+
+
+def test_the_question_is_expanded_before_searching(server, store, monkeypatch):
+    """質問の語と本文の語は噛み合わない。本文に出てきそうな語を足してから引くこと。"""
+    from cqs import answer
+
+    _clear(monkeypatch)
+    monkeypatch.setenv("CQS_LLM_BASE_URL", server)
+    sid = store.add_source(url="https://example.com/a", kind="fan_chronicle", title="時系列")
+    v = store.add_version(sid, text="本文", title="時系列")
+    store.ensure_entity("かぐや")
+    want = store.add_claim(text="卒業ライブの夜は満月だった。", source_version_id=v.version_id)
+    # 質問の語（月・日付）だけでは埋もれるよう、無関係な記述を厚めに入れる
+    for i in range(60):
+        store.add_claim(text=f"その月の日付に関する別の話題その{i}が記されている。",
+                        source_version_id=v.version_id)
+
+    q = "かぐやが月に帰った日は？"
+    assert want not in [c["id"] for c in answer.retrieve(store, q, max_claims=20)["claims"]]
+
+    _Fake.reply_text = '["卒業ライブ","満月"]'
+    got = answer.search_terms(store, q)
+    assert got == ["卒業ライブ", "満月"]
+    assert want in [c["id"] for c in answer.retrieve(store, q, max_claims=20,
+                                                     extra_terms=got)["claims"]]

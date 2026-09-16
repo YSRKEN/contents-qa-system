@@ -256,3 +256,12 @@ def test_prompt_tells_the_model_to_answer_per_target(store):
     body = answer.format_context(ctx)
     assert "対象ごとに分けて材料を集めた" in body
     assert "## かぐや について集めた材料" in body
+
+
+def test_a_brand_new_work_can_still_be_searched(store):
+    """立ち上げ直後で主張が1〜2件しかなくても引けること。"""
+    sid = store.add_source(url="https://example.com/a", kind="official_site", title="紹介")
+    v = store.add_version(sid, text="卒業ライブの夜は満月だった。", title="紹介")
+    cid = store.add_claim(text="卒業ライブの夜は満月だった。", source_version_id=v.version_id)
+    got = [c["id"] for c in answer.retrieve(store, "満月の夜のこと")["claims"]]
+    assert cid in got

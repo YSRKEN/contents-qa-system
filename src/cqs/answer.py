@@ -106,9 +106,15 @@ def question_terms(question: str) -> list[str]:
 
 
 def term_weight_for(df: int, total: int) -> float:
-    """出現件数から重みを出す。多くの主張に当たるものほど軽い。"""
-    if df <= 0 or total <= 1:
+    """出現件数から重みを出す。多くの主張に当たるものほど軽い。
+
+    主張が数件しかないDBでは、log の分母が0や負になって重みが消える。
+    立ち上げ直後の作品でも引けるように、分母の下限を置く。
+    """
+    if df <= 0:
         return 0.0
+    if total <= 2:
+        return 8.0
     return round(8.0 * math.log(max(total / df, 1.0)) / math.log(total), 2)
 
 
@@ -709,6 +715,40 @@ def plan_question(store: WorkStore, question: str, *, model: str | None = None,
     return {"targets": targets[:limit], "depth": depth}
 
 
+SEARCH_TERM_PROMPT = """作品『{title}』の資料を全文検索するための検索語を作る。
+
+質問: {question}
+
+登場する語: {entities}
+
+この質問に答える記述が本文中でどう書かれていそうかを考え、実際に本文に出てきそうな語を挙げる。
+次の3種類を混ぜること。
+1. 出来事名・固有名詞・言い換え・日付や数量の表記
+2. 質問が「それぞれ」「全員」「一覧」のようにまとまりを指している場合は、
+   その一人ひとり・一つひとつの名前（上の「登場する語」から選ぶ）
+3. 資料がその情報を書くときの決まり文句（「〜が魔女化した存在」「性質は」「声 - 」のような、
+   項目の見出しや定型の言い回し）
+
+質問文の言い回しをそのまま返さないこと。4〜12個。
+JSON配列だけを返す。例: ["卒業ライブ","満月","9/12"]"""
+
+
+def search_terms(store: WorkStore, question: str, *, model: str | None = None,
+                 limit: int = 12) -> list[str]:
+    """質問の語と本文の語はしばしば重ならないので、本文に出てきそうな語を作らせる。
+
+    「月に帰った日付」に対して本文は「卒業ライブ」「満月」と書いている、といったずれを埋める。
+    LLMが無ければ空を返し、質問文から機械的に取った語だけで引く。
+    """
+    got = _ask_json(
+        SEARCH_TERM_PROMPT.format(title=store.meta.get("title") or "", question=question,
+                                  entities=_entity_names(store)),
+        model=model)
+    if not isinstance(got, list):
+        return []
+    return [str(x).strip() for x in got if str(x).strip()][:limit]
+
+
 def follow_ups(store: WorkStore, question: str, answer_text: str, *,
                model: str | None = None) -> list[str]:
     """答えたあとに、次に訊きそうなことを出す。
@@ -740,6 +780,9 @@ def answer(
     plan_result = plan_question(store, question, model=model) if (plan and use_llm) else {
         "targets": [], "depth": "detail"}
     targets = plan_result["targets"]
+    if plan and use_llm:
+        # 質問の語と本文の語は噛み合わないことが多いので、本文に出てきそうな語を足す
+        extra_terms = [*extra_terms, *search_terms(store, question, model=model)]
     if len(targets) >= 2:
         ctx = retrieve_for_targets(store, question, targets,
                                    max_claims=max_claims, extra_terms=extra_terms)
