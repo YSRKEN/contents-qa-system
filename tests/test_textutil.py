@@ -100,3 +100,11 @@ def test_リンクの外に文字がある項目は残す():
     html = '<ul><li>開発 - <a href="/q">QualiArts</a></li></ul>'
     text, _ = textutil.html_to_text(html)
     assert "開発 - QualiArts" in text.replace("\n", " ").replace("・", "")
+
+
+def test_折り返された文でも原文中の位置が見つかる():
+    """取り込みは折り返しを繋いでから文に割るので、出来た文はそのままでは原文に無い。"""
+    text = "彩葉はかぐやと\n暮らし始める。次の日、ヤチヨに会う。"
+    assert textutil.find_flat(text, "彩葉はかぐやと暮らし始める。") == 0
+    assert textutil.find_flat(text, "次の日、ヤチヨに会う。") == text.index("次の日")
+    assert textutil.find_flat(text, "そんな文は無い。") is None

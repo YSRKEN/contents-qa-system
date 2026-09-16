@@ -148,19 +148,7 @@ def restate_version(
 
 def _find(text: str, needle: str) -> int | None:
     """原文から根拠の一節を探す。空白と改行の違いは無視する。"""
-    at = text.find(needle)
-    if at >= 0:
-        return at
-    flat_needle = textutil.flatten(needle)
-    if not flat_needle:
-        return None
-    index, flat = [], []
-    for i, ch in enumerate(text):
-        if not ch.isspace():
-            flat.append(ch)
-            index.append(i)
-    at = "".join(flat).find(flat_needle)
-    return index[at] if at >= 0 else None
+    return textutil.find_flat(text, needle)
 
 
 def prompts(store: WorkStore, version_id: int, *, size: int = 3000) -> list[str]:

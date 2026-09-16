@@ -6,7 +6,7 @@ locator（抽出元の文）を原文から探して位置を復元する。
 """
 import sys
 sys.path.insert(0, "src")
-from cqs import config
+from cqs import config, textutil
 
 for slug in sys.argv[1:] or [w["file_slug"] for w in config.list_works() if not w.get("error")]:
     st = config.open_work(slug)
@@ -19,10 +19,8 @@ for slug in sys.argv[1:] or [w["file_slug"] for w in config.list_works() if not 
         cursor = 0
         for r in rows:
             needle = r["locator"] or r["text"]
-            at = text.find(needle, cursor)
-            if at < 0:
-                at = text.find(needle)          # 前に戻ることもある（取り直しぶん）
-            if at < 0:
+            at = textutil.find_flat(text, needle, cursor)
+            if at is None:
                 missed += 1
                 continue
             cursor = at + len(needle)

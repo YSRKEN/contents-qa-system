@@ -244,6 +244,32 @@ def clean_text(text: str) -> str:
 _SPACES = re.compile(r"[\s\u3000]+")
 
 
+def find_flat(text: str, needle: str, start: int = 0) -> int | None:
+    """原文から一節を探して、その先頭位置を返す。空白と改行の違いは無視する。
+
+    取り込みは折り返された行を繋いでから文に割るので、文の途中に改行があると、
+    出来上がった文はそのままの形では原文に無い。位置が埋まらないと、主張の
+    並び順が原文の順と一致しなくなり、時系列の組み立てが壊れる。
+    """
+    at = text.find(needle, start)
+    if at >= 0:
+        return at
+    if start:
+        at = text.find(needle)                  # 前に戻ることもある（取り直しぶん）
+        if at >= 0:
+            return at
+    flat_needle = flatten(needle)
+    if not flat_needle:
+        return None
+    index, flat = [], []
+    for i, ch in enumerate(text):
+        if not ch.isspace():
+            flat.append(ch)
+            index.append(i)
+    at = "".join(flat).find(flat_needle)
+    return index[at] if at >= 0 else None
+
+
 def flatten(text: str) -> str:
     """空白をすべて取り除く。
 
