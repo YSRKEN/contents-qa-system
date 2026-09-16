@@ -75,3 +75,28 @@ def test_headings_are_marked_from_the_html():
     assert "## 此岸の魔女" in text
     # 見出しの中に別のタグが入っていても、1行の見出しにまとまること
     assert "## おめかしの魔女 / キャンデロロ（Candeloro）" in text
+
+
+def test_箇条書きの項目は見出しにならない():
+    """短いリンク一覧が節見出しとして読まれると、下の本文が無関係な語に紐づく。"""
+    html = "<ul><li>手順を説明します。</li></ul>"
+    assert "・手順を説明します。" in textutil.html_to_text(html)[0]
+
+
+def test_リンクだけの箇条書き項目は落とす():
+    """「おすすめ記事」のような回遊用リンク一覧は本文ではない。"""
+    html = (
+        '<ul><li><a href="/a">トップページ</a></li>'
+        '<li><a href="/b">リセマラ当たり</a></li></ul>'
+        "<p>ここが本文である。</p>"
+    )
+    text, _ = textutil.html_to_text(html)
+    assert "トップページ" not in text
+    assert "リセマラ当たり" not in text
+    assert "ここが本文である。" in text
+
+
+def test_リンクの外に文字がある項目は残す():
+    html = '<ul><li>開発 - <a href="/q">QualiArts</a></li></ul>'
+    text, _ = textutil.html_to_text(html)
+    assert "開発 - QualiArts" in text.replace("\n", " ").replace("・", "")

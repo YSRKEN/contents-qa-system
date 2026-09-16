@@ -78,6 +78,7 @@ SEGMENT_RULES = [
     ("gakuen.idolmaster-official.jp/system", "ゲームシステム"),
     ("gakuen.idolmaster-official.jp", "作品全体"),
     ("ja.wikipedia.org", "作品全体"),
+    ("gamerch.com/gakumasu", "ゲームシステム"),
     ("technote.qualiarts.jp", "制作・現実側"),
     ("developers.cyberagent.co.jp", "制作・現実側"),
     ("www.qualiarts.jp", "制作・現実側"),
@@ -189,6 +190,33 @@ ENTITIES: list[tuple[str, str, tuple[str, ...]]] = [
     ("ボーカルトレーナー", "term", ()),
     ("ダンストレーナー", "term", ()),
     ("ビジュアルトレーナー", "term", ()),
+    # ゲームシステムの用語。攻略Wikiの本文に実際に現れたものだけを入れている。
+    # 「プロ」「マスター」「初星」のような他語の一部になる短い語は、
+    # 誤って何にでも当たるので登録しない（難易度は「難易度プロ」の形で持つ）。
+    ("体力", "term", ()), ("元気", "term", ()), ("好調", "term", ()),
+    ("絶好調", "term", ()), ("好印象", "term", ()), ("やる気", "term", ()),
+    ("集中", "term", ()), ("温存", "term", ()), ("全力", "term", ()),
+    ("消費体力減少", "term", ()), ("パラメータ", "term", ()),
+    ("ボーカル", "term", ()), ("ダンス", "term", ()), ("ビジュアル", "term", ()),
+    ("レッスン", "term", ()), ("授業", "term", ()), ("おでかけ", "term", ()),
+    ("相談", "term", ()), ("活動支給", "term", ()), ("追い込みレッスン", "term", ()),
+    ("中間試験", "term", ()), ("最終試験", "term", ()), ("休み", "term", ()),
+    ("トラブル", "term", ()), ("スキルカード", "term", ()),
+    ("スキルカード強化", "term", ()), ("アクティブスキルカード", "term", ()),
+    ("メンタルスキルカード", "term", ()), ("Pアイテム", "term", ()),
+    ("Pドリンク", "term", ()), ("サポートカード", "term", ("サポカ",)),
+    ("プロデュースアイドル", "term", ("Pアイドル",)), ("メモリー", "term", ()),
+    ("センス", "term", ()), ("ロジック", "term", ()), ("アノマリー", "term", ()),
+    ("難易度プロ", "term", ()), ("難易度マスター", "term", ()),
+    ("Sランク", "term", ()), ("A+", "term", ()),
+    ("親愛度", "term", ()), ("トゥルーエンド", "term", ()), ("記録の鍵", "term", ()),
+    ("フラワー", "term", ()), ("サポート強化ポイント", "term", ()), ("PLv", "term", ()),
+    ("コンテスト", "term", ()), ("サークル", "term", ()), ("アイドルへの道", "term", ()),
+    ("NIA", "term", ()), ("レジェンダリーノート", "term", ()),
+    ("アナザーアイドル", "term", ()), ("特訓", "term", ()),
+    ("ガシャ", "term", ("ガチャ",)), ("リセマラ", "term", ()),
+    ("再生成", "term", ()), ("厳選", "term", ()), ("デッキ", "term", ()),
+    ("編成", "term", ()),
 ]
 
 # 学園名簿のURL断片。花海咲季だけは /idol/ 自身が本人のページ（data-current="saki"）。
@@ -212,6 +240,17 @@ IDOL_PATHS = [
 
 # 学園名簿以外の公式ページ（自動抽出に回す）
 OTHER_PATHS = ["/", "/introduction/", "/media/"]
+
+# 攻略Wiki（Gamerch）のゲームシステム解説。公式の /system/ はJS描画で本文が取れない。
+# 掲示板（招待コード・フレンド募集・雑談・不具合報告）は入れない。
+WIKI_SYSTEM = [
+    852953, 851410, 851360, 855252, 850392, 850252, 849768, 858511, 856359,
+    853443, 852000, 859882, 864485, 851965, 851082, 856785, 894812, 922503,
+    855850, 849767, 851157, 856352, 850640, 872292, 855477, 857325, 851140,
+    849307, 938185, 938186, 938187, 938188, 938189, 922954, 923030, 849770,
+    849308, 850520,
+]
+WIKI_BASE = "https://gamerch.com/gakumasu/"
 
 
 def _text(fragment: str) -> str:
@@ -375,7 +414,9 @@ def main() -> int:
                 if v:
                     by_url[s["url"]] = int(v["id"])
         else:
-            for url in [BASE + p for p in OTHER_PATHS + [q for q, _ in IDOL_PATHS]] + [WIKIPEDIA]:
+            urls = [BASE + p for p in OTHER_PATHS + [q for q, _ in IDOL_PATHS]]
+            urls += [WIKIPEDIA] + [f"{WIKI_BASE}{i}" for i in WIKI_SYSTEM]
+            for url in urls:
                 try:
                     r = ingest.ingest_url(store, url, respect_robots=args.robots)
                 except Exception as e:

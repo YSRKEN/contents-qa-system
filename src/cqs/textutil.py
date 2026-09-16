@@ -48,6 +48,10 @@ class _Extractor(HTMLParser):
         # 表のセルと同じように中身を溜めてから1行にまとめる。
         self._heading_depth = 0
         self._heading: list[str] | None = None
+        # 箇条書きの項目。中身がリンクだけの項目は、本文ではなく回遊用のリンク一覧
+        # （「おすすめ記事」「関連記事」）なので落とす。[開始位置, リンク数, リンク外に文字があったか]
+        self._items: list[list] = []
+        self._a_depth = 0
 
     # --- 表 ---
     def _start_table(self) -> None:
@@ -96,8 +100,17 @@ class _Extractor(HTMLParser):
             return
         if tag == "br":
             self.parts.append("\n")
+        elif tag == "li":
+            # 箇条書きの項目は節見出しではない。印を付けておかないと、
+            # ナビゲーションのリンク一覧（「おすすめ記事」など短い項目の連なり）が
+            # 見出しとして読まれ、その下の本文が無関係な語に紐づく。
+            self.parts.append("\n・")
+            self._items.append([len(self.parts), 0, False])
         elif tag in _BLOCK_TAGS:
             self.parts.append("\n")
+        if tag == "a" and self._items:
+            self._a_depth += 1
+            self._items[-1][1] += 1
         if tag == "meta":
             a = {k.lower(): (v or "") for k, v in attrs}
             if a.get("property") == "og:title" and not self.title:
@@ -129,6 +142,12 @@ class _Extractor(HTMLParser):
             return
         if tag == "title":
             self._in_title = False
+        if tag == "a" and self._items:
+            self._a_depth = max(0, self._a_depth - 1)
+        if tag == "li" and self._items:
+            start, links, outside = self._items.pop()
+            if links and not outside:
+                del self.parts[start - 1:]      # 「\n・」ごと落とす
         if tag in _HEADING_TAGS:
             self._heading_depth = max(0, self._heading_depth - 1)
             if self._heading_depth == 0:
@@ -158,6 +177,9 @@ class _Extractor(HTMLParser):
                 self._caption.append(data)
             return
         if data.strip():
+            if self._items and self._a_depth == 0:
+                for item in self._items:
+                    item[2] = True
             self.parts.append(data)
 
 
