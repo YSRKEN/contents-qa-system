@@ -2,15 +2,22 @@
 
     python examples/export_for_web.py out/data.js
 
-作品ごとにファイルを分ける。1作品が数万件になると1ファイルが配布の上限
-（16MB）を超えるため。ページは索引だけ先に読み、作品を選んだ時点で
-その作品のファイルを読む。
+本体はJSONをgzipで固め、base64にして .txt で出す。ページ側で
+DecompressionStream を通して展開する。同じ語の繰り返しが多いので、
+gzipで生のJSONの2割前後まで落ちる。base64で3分の4に戻るが、それでも
+生の3割弱で済む。バイナリのまま置けないのは、配布できるのが
+テキスト・画像・音声など決まった種類だけのため。
+
+作品ごとにファイルを分けるのは、選んでいない作品まで読み込んで展開する
+必要がないため。索引だけ先に読み、作品を選んだ時点でその作品のぶんを読む。
 
 主張の出典種別・URL・区分は出典側に同じものがあるので書き出さない。
 学園アイドルマスターでは、この3つで16.7MBのうち4.9MBを占めていた。
 ページ側は読み込み時に出典から補う。
 """
+import base64
 import datetime
+import gzip
 import json
 import pathlib
 import sys
@@ -23,12 +30,23 @@ OUT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "data.js")
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 
-def dump(path: pathlib.Path, js: str) -> int:
+def dump_text(path: pathlib.Path, js: str) -> int:
     path.write_text(js, encoding="utf-8")
     n = len(js.encode())
-    flag = "  ← 上限16MB超過" if n > 16 * 1024 * 1024 else ""
-    print(f"  {path.name}: {round(n / 1024):>7} KB{flag}")
+    print(f"  {path.name}: {round(n / 1024):>7} KB")
     return n
+
+
+def dump_gz(path: pathlib.Path, obj) -> int:
+    """JSONをgzipで固め、base64にして書く。配布の上限は1件16MB。"""
+    raw = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode()
+    # mtime=0 で、内容が同じなら毎回同じバイト列になる（差し替えの有無が分かる）
+    packed = base64.b64encode(gzip.compress(raw, compresslevel=9, mtime=0))
+    path.write_bytes(packed)
+    flag = "  ← 上限16MB超過" if len(packed) > 16 * 1024 * 1024 else ""
+    print(f"  {path.name}: {round(len(packed) / 1024):>7} KB"
+          f"（生 {round(len(raw) / 1024):>7} KB / {round(100 * len(packed) / len(raw))}%）{flag}")
+    return len(packed)
 
 
 index = []
@@ -57,12 +75,8 @@ for w in config.list_works():
                              for e in st.list_entities()],
                 "claims": claims, "sources": sources, "stats": st.stats()}
         print(f"{st.meta.get('title')}: 出典{len(sources)} / 主張{len(claims)}")
-        j = json.dumps(work, ensure_ascii=False, separators=(",", ":"))
-        dump(OUT.with_name(f"work-{slug}.js"), f'window.CQS_WORK["{slug}"]={j};'
-             f"window.dispatchEvent(new CustomEvent('cqs-work',{{detail:'{slug}'}}));")
-        t = json.dumps(texts, ensure_ascii=False, separators=(",", ":"))
-        dump(OUT.with_name(f"text-{slug}.js"), f'window.CQS_TEXT["{slug}"]={t};'
-             f"window.dispatchEvent(new CustomEvent('cqs-text',{{detail:'{slug}'}}));")
+        dump_gz(OUT.with_name(f"work-{slug}.txt"), work)
+        dump_gz(OUT.with_name(f"text-{slug}.txt"), texts)
         index.append({"work": work["work"], "stats": work["stats"]})
 
 data = {"kinds": {k: v["label"] for k, v in SOURCE_KINDS.items()},
@@ -71,5 +85,5 @@ data = {"kinds": {k: v["label"] for k, v in SOURCE_KINDS.items()},
         "works": index,
         "exported_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
 print("索引")
-dump(OUT, "window.CQS_WORK={};window.CQS_TEXT={};window.CQS_DATA="
-     + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";")
+dump_text(OUT, "window.CQS_WORK={};window.CQS_TEXT={};window.CQS_DATA="
+          + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";")
