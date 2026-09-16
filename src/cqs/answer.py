@@ -12,11 +12,10 @@ import os
 import re
 from typing import Any, Sequence
 
-from . import report, textutil
+from . import llm, report, textutil
 from .constants import VERIFICATION_HANDLING, verification_label
 from .store import WorkStore
 
-DEFAULT_MODEL = os.environ.get("CQS_MODEL", "claude-opus-5")
 
 SYSTEM_PROMPT = """あなたは特定の作品について、蓄積された出典付きの主張だけを根拠に答える。
 
@@ -682,29 +681,9 @@ FOLLOW_UP_PROMPT = """作品『{title}』の知識ベースで、次のやり取
 JSON配列だけを返す。"""
 
 
-def _has_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
-
-
 def _ask_json(prompt: str, *, model: str | None, max_tokens: int = 600) -> Any:
     """短い問い合わせを1回だけ投げて、JSONを取り出す。失敗したら None。"""
-    if not _has_key():
-        return None
-    try:
-        import anthropic  # type: ignore
-
-        resp = anthropic.Anthropic().messages.create(
-            model=model or DEFAULT_MODEL, max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(b.text for b in resp.content if b.type == "text")
-        for opener, closer in (("[", "]"), ("{", "}")):
-            start, end = text.find(opener), text.rfind(closer)
-            if 0 <= start < end:
-                return json.loads(text[start:end + 1])
-    except Exception:
-        return None
-    return None
+    return llm.chat_json(prompt, max_tokens=max_tokens, model=model)
 
 
 def _entity_names(store: WorkStore, limit: int = 200) -> str:
@@ -775,41 +754,22 @@ def answer(
     if not use_llm:
         result["reason"] = "LLM呼び出しを行わない指定です。"
         return result
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+    if not llm.available():
         result["reason"] = (
-            "ANTHROPIC_API_KEY が未設定のため、回答生成は行いませんでした。"
-            "上のプロンプトを Claude Desktop / Claude Code に貼るか、MCPサーバー経由で使ってください。"
+            "LLMの設定が無いため、回答生成は行いませんでした。"
+            "上のプロンプト（result['prompt']）を、お使いのAIチャットにそのまま貼れば同じ答えが得られます。"
+            "自動で答えさせたい場合は OPENAI_API_KEY か ANTHROPIC_API_KEY、"
+            "またはOpenAI互換サーバの CQS_LLM_BASE_URL を設定してください。"
         )
         return result
     try:
-        import anthropic  # type: ignore
-    except ImportError:
-        result["reason"] = (
-            "anthropic パッケージが未インストールです（pip install 'contents-qa-system[llm]'）。"
-        )
+        text, used = llm.chat(prompt["user"], system=prompt["system"], max_tokens=16000,
+                              model=model)
+    except llm.LLMError as e:
+        result["reason"] = str(e)
         return result
 
-    client = anthropic.Anthropic()
-    model = model or DEFAULT_MODEL
-    try:
-        resp = client.messages.create(
-            model=model,
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
-            system=prompt["system"],
-            messages=[{"role": "user", "content": prompt["user"]}],
-        )
-    except anthropic.APIStatusError as e:
-        result["reason"] = f"APIエラー ({e.status_code}): {e.message}"
-        return result
-    except anthropic.APIConnectionError as e:
-        result["reason"] = f"接続エラー: {e}"
-        return result
-
-    if resp.stop_reason == "refusal":
-        result["reason"] = "モデルが応答を拒否しました。"
-        return result
-    result["answer"] = "\n".join(b.text for b in resp.content if b.type == "text")
-    result["model"] = resp.model
+    result["answer"] = text
+    result["model"] = used
     result["follow_ups"] = follow_ups(store, question, result["answer"], model=model)
     return result

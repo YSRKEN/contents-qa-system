@@ -53,6 +53,8 @@ async function loadWorks() {
   $("workstats").textContent = w && !w.error
     ? `出典 ${w.sources} / 版 ${w.versions} / 主張 ${w.claims_active} / エンティティ ${w.entities} / 未照合候補 ${w.candidates_pending}`
     : "";
+  document.title = w && !w.error ? `${w.title} — 作品QAシステム` : "作品QAシステム";
+  updateAskPlaceholder();
 }
 
 // --- 操作タブ ---------------------------------------------------------------
@@ -163,12 +165,20 @@ $("askForm").onsubmit = async (ev) => {
     const d = await post("ask", { question: q, use_llm: $("askLLM").checked });
     const ctx = d.context;
     let html = "";
+    if (ctx.targets && ctx.targets.length)
+      html += `<p class="muted">対象ごとに分けて調べました: ${esc(ctx.targets.map(
+        t => `${t}（${(ctx.claims_per_target || {})[t] || 0}件）`).join("、"))}</p>`;
     if (d.answer) html += `<div class="answer">${esc(d.answer)}</div><p class="muted">${esc(d.model)} / 主張${ctx.claims.length}件を参照</p>`;
     else html += `<p class="muted">${esc(d.reason || "")}</p>
-      <details open><summary>Claude に貼るプロンプト</summary><pre class="prompt">${esc(d.prompt.system)}\n\n---\n\n${esc(d.prompt.user)}</pre></details>`;
+      <details open><summary>AIチャットに貼るプロンプト（このまま貼れば同じ答えになります）</summary><pre class="prompt">${esc(d.prompt.system)}\n\n---\n\n${esc(d.prompt.user)}</pre></details>`;
+    if (d.follow_ups && d.follow_ups.length)
+      html += `<h2>次に訊けること</h2><div class="chips">` + d.follow_ups.map(
+        x => `<button class="chip next-q" type="button">${esc(x)}</button>`).join("") + `</div>`;
     html += `<h2>参照した主張（${ctx.claims.length}件）</h2>` + (ctx.claims.map(claimCard).join("") || '<p class="muted">該当なし</p>');
     html += `<h2>原文層の該当箇所</h2>` + (ctx.sources.map(sourceCard).join("") || '<p class="muted">該当なし</p>');
     $("askOut").innerHTML = html;
+    for (const b of $("askOut").querySelectorAll(".next-q"))
+      b.onclick = () => { $("askQ").value = b.textContent; $("askForm").requestSubmit(); };
   } catch (e) { $("askOut").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 };
 

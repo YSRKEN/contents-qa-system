@@ -61,3 +61,13 @@ details summary { cursor: pointer; color: var(--accent); }
 .err { color: var(--bad); }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 td, th { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
+
+/* 次に訊けること */
+.chips { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin: 8px 0 16px; }
+.chip {
+  text-align: left; background: var(--panel); color: inherit;
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 12px; font: inherit; line-height: 1.5; cursor: pointer; max-width: 100%;
+}
+.chip:hover { border-color: var(--accent); }
+.chip::before { content: "→ "; opacity: .55; }

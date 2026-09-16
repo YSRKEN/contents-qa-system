@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import fetch
+from . import llm
 from .store import StoreError, WorkStore
 
 # 本文の内容ではない画像（アイコン・ボタン・関連記事のサムネイルなど）
@@ -140,23 +141,19 @@ def transcribe(
     prompt: str = DEFAULT_PROMPT,
     limit: int = 20,
 ) -> list[dict]:
-    """画像を取得し、Claudeに読み取らせて原文層に入れる。
+    """画像を取得し、LLMに読み取らせて原文層に入れる。
 
-    画像を読む工程なので APIキー（ANTHROPIC_API_KEY）が要る。
-    キーが無い環境では `save_all` で画像を書き出し、読み取り結果を
+    画像を読む工程なのでLLMの設定が要る（OPENAI_API_KEY / ANTHROPIC_API_KEY /
+    OpenAI互換サーバの CQS_LLM_BASE_URL のいずれか）。
+    設定が無い環境では `save_all` で画像を書き出し、手元のAIチャットに読ませた結果を
     `store_transcript` や `cqs add-text --kind image_transcript` で入れればよい。
     """
-    try:
-        import anthropic  # type: ignore
-    except ImportError as e:
+    if not llm.available():
         raise StoreError(
-            "anthropic パッケージが必要です（pip install 'contents-qa-system[llm]'）"
-        ) from e
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        raise StoreError("ANTHROPIC_API_KEY が未設定です")
-
-    client = anthropic.Anthropic()
-    model = model or os.environ.get("CQS_MODEL", "claude-opus-5")
+            "LLMの設定がありません（OPENAI_API_KEY / ANTHROPIC_API_KEY / CQS_LLM_BASE_URL）。"
+            "cqs images save で画像を保存し、読み取った結果を "
+            "cqs add-text --kind image_transcript で入れることもできます。"
+        )
     results: list[dict] = []
     for ref in list_images(store, source_version_id)[:limit]:
         try:
@@ -165,27 +162,14 @@ def transcribe(
             results.append({"url": ref.url, "error": str(e)})
             continue
         try:
-            resp = client.messages.create(
-                model=model,
-                max_tokens=8000,
-                thinking={"type": "adaptive"},
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {
-                            "type": "base64", "media_type": media,
-                            "data": base64.standard_b64encode(data).decode("ascii")}},
-                        {"type": "text", "text": prompt + (f"\n\n（代替テキスト: {ref.alt}）" if ref.alt else "")},
-                    ],
-                }],
+            text, _used = llm.chat(
+                prompt + (f"\n\n（代替テキスト: {ref.alt}）" if ref.alt else ""),
+                images=[(media, data)], max_tokens=8000, model=model,
             )
-        except anthropic.APIStatusError as e:
-            results.append({"url": ref.url, "error": f"APIエラー ({e.status_code}): {e.message}"})
+        except llm.LLMError as e:
+            results.append({"url": ref.url, "error": str(e)})
             continue
-        if resp.stop_reason == "refusal":
-            results.append({"url": ref.url, "error": "モデルが読み取りを拒否しました"})
-            continue
-        text = "\n".join(b.text for b in resp.content if b.type == "text").strip()
+        text = text.strip()
         if not text:
             results.append({"url": ref.url, "error": "読み取り結果が空でした"})
             continue

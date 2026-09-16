@@ -13,8 +13,7 @@ authors = [{ name = "YSRKEN" }]
 dependencies = []
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2"]
-llm = ["anthropic>=0.40"]
+mcp = ["mcp>=1.2"]   # MCPサーバーとして使う場合のみ。LLM呼び出しに追加の依存は要らない
 dev = ["pytest>=8"]
 
 [project.scripts]
