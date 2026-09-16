@@ -226,3 +226,23 @@ def test_inbox_accepts_what_the_page_hands_over(store, monkeypatch):
     cli.cmd_inbox(argparse.Namespace(work="w", json=False, file=None, text=handed,
                                      robots=False, no_robots=False))
     assert any(s["title"] == "メモ" for s in store.list_sources())
+
+
+def test_専用の取り込みが見ていない節にも自動抽出が届く(store):
+    """作品ごとの取り込みは記事の一部しか見ていないことがある。
+
+    登場人物欄だけを専用に取り込んだ版へ自動抽出を掛けると、あらすじの節が入り、
+    専用の取り込みが既に主張にした一節からは二重に作られない。
+    """
+    store.ensure_entity("彩葉")
+    text = "## 登場人物\n彩葉は17歳の高校生である。\n\n## あらすじ\n彩葉はかぐやと暮らし始める。\n"
+    r = ingest.ingest_text(store, text, kind="wiki_index", title="作品記事")
+    v = r["source_version_id"]
+    # 専用の取り込みが作った主張。言い直しているので文字列では一致しない
+    store.add_claim(text="登場人物: 彩葉は17歳である。", source_version_id=v,
+                    entities=["彩葉"], locator="彩葉は17歳の高校生である。",
+                    offset=text.index("彩葉は17歳の高校生である。"), note="専用の取り込み")
+
+    ids = ingest.register_proposed(store, v, limit=100)
+    got = [store.get_claim(i)["text"] for i in ids]
+    assert got == ["あらすじ: 彩葉はかぐやと暮らし始める。"]

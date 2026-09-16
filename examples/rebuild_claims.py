@@ -3,10 +3,10 @@
 抽出の規則（見出しの取り方、どの文を採るか）を変えたときに使う。
 手で足した主張（note の付いたもの）は残す。
 
-note の付いた主張が残る版は、作品固有の取り込みが担当している版なので
-自動抽出を掛け直さない。掛けると、同じ文が「専用の取り込みで作った主張」と
-「自動抽出の主張」の二重に入る。その版を作り直したいときは、
-作品ごとの取り込みスクリプト（examples/ingest_*.py）を使う。
+note の付いた主張が残る版にも自動抽出を掛ける。二重にならないのは、
+`register_proposed` が**原文での位置の重なり**を見て、既に主張が付いている
+一節からは作らないため。専用の取り込みは記事の一部（登場人物欄など）しか
+見ていないことがあり、掛けないと、あらすじや設定の節がまるごと落ちる。
 """
 import sys
 sys.path.insert(0, "src")
@@ -28,16 +28,14 @@ for slug in sys.argv[1:] or [w["file_slug"] for w in config.list_works() if not 
             "DELETE FROM claims WHERE source_version_id = ? AND note IS NULL AND status = 'active'",
             (v,))
         st.conn.commit()
-        bespoke = st.conn.execute(
+        if st.conn.execute(
             "SELECT 1 FROM claims WHERE source_version_id = ? AND note IS NOT NULL "
-            "AND status = 'active' LIMIT 1", (v,)).fetchone()
-        if bespoke:
+            "AND status = 'active' LIMIT 1", (v,)).fetchone():
             kept += 1
-            continue
         try:
             ingest.register_proposed(st, v, limit=100000)
         except Exception as ex:                       # 取り込めない版は飛ばす
             print(f"  skip v{v}: {ex}")
-    print(f"{slug}: 本文を作り直した版 {redone} / 専用の取り込みに任せた版 {kept} / "
+    print(f"{slug}: 本文を作り直した版 {redone} / 専用の取り込みに足した版 {kept} / "
           f"主張 {before} → {st.stats()['claims_active']}")
     st.close()

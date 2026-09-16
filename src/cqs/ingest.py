@@ -5,6 +5,7 @@ CLI・MCP・Web UI から共通で呼ぶ。個々の層の操作は store.py に
 
 from __future__ import annotations
 
+import bisect
 from typing import Iterable, Sequence
 
 from . import extract, fetch, report, textutil
@@ -314,6 +315,31 @@ def propose_claims(
     return cands[:limit]
 
 
+def _covered_spans(store: WorkStore, source_version_id: int) -> list[tuple[int, int]]:
+    """その版で既に主張の根拠になっている、原文中の範囲を返す。"""
+    spans = []
+    for r in store.conn.execute(
+        "SELECT offset, locator FROM claims WHERE source_version_id = ? "
+        "AND offset IS NOT NULL AND status = 'active'", (source_version_id,)
+    ):
+        at = int(r["offset"])
+        spans.append((at, at + len(r["locator"] or "")))
+    spans.sort()
+    return spans
+
+
+def _overlaps(spans: Sequence[tuple[int, int]], offset: int | None, length: int) -> bool:
+    if offset is None or not spans:
+        return False
+    lo, hi = offset, offset + length
+    i = bisect.bisect_right(spans, (lo, 10**9))
+    # 直前の範囲と、同じ位置から始まる範囲だけ見れば足りる
+    for a, b in spans[max(0, i - 1):i + 1]:
+        if a < hi and lo < b:
+            return True
+    return False
+
+
 def register_proposed(
     store: WorkStore,
     source_version_id: int,
@@ -337,6 +363,10 @@ def register_proposed(
             "SELECT text FROM claims WHERE source_version_id = ?", (source_version_id,)
         )
     }
+    # 既に主張が付いている原文の範囲。作品ごとの取り込みが作った主張は、本文を
+    # 言い直したり組み立て直したりしているので文字列では一致しない。同じ一節から
+    # 二重に作らないよう、原文での位置で重なりを見る。
+    covered = _covered_spans(store, source_version_id)
     ids: list[int] = []
     for c in cands:
         if require_entity and not c["entities"]:
@@ -344,6 +374,8 @@ def register_proposed(
         # 見出しを本文に冠して、その文が何についての記述かを残す
         text = f"{c['section']}: {c['text']}" if c.get("section") else c["text"]
         if text in existing:
+            continue
+        if _overlaps(covered, c.get("offset"), len(c["text"])):
             continue
         existing.add(text)
         ids.append(
