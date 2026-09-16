@@ -59,6 +59,12 @@ KIND_RULES = [
     ("gamerch.com/gakumasu", "wiki_index"),
     ("seesaawiki.jp/gakumasu", "wiki_index"),
     ("note.com/makura_1210", "fan_chronicle"),
+    ("note.com/kaido_729", "fan_chronicle"),
+    ("cedil.cesa.or.jp", "official_site"),
+    ("cgworld.jp", "article"),
+    ("gamemakers.jp", "article"),
+    ("learning.unity3d.jp", "article"),
+    ("www.inside-games.jp", "article"),
     ("denfaminicogamer.jp", "interview"),
     ("famitsu.com", "article"),
     ("4gamer.net", "article"),
@@ -83,6 +89,12 @@ SEGMENT_RULES = [
     ("ja.wikipedia.org", "作品全体"),
     ("gamerch.com/gakumasu", "ゲームシステム"),
     ("note.com/makura_1210", "親愛度コミュ"),
+    ("note.com/kaido_729", "制作・現実側"),
+    ("cedil.cesa.or.jp", "制作・現実側"),
+    ("cgworld.jp", "制作・現実側"),
+    ("gamemakers.jp", "制作・現実側"),
+    ("learning.unity3d.jp", "制作・現実側"),
+    ("www.inside-games.jp", "制作・現実側"),
     ("technote.qualiarts.jp", "制作・現実側"),
     ("developers.cyberagent.co.jp", "制作・現実側"),
     ("www.qualiarts.jp", "制作・現実側"),
@@ -221,6 +233,24 @@ ENTITIES: list[tuple[str, str, tuple[str, ...]]] = [
     ("ガシャ", "term", ("ガチャ",)), ("リセマラ", "term", ()),
     ("再生成", "term", ()), ("厳選", "term", ()), ("デッキ", "term", ()),
     ("編成", "term", ()),
+    # 制作・技術の用語。CEDECの講演とその報告記事に実際に現れたものだけ。
+    # 「影」「髪」「汗」「Go」は単字・短語で他の語の一部になるので入れない。
+    ("Unity", "term", ()), ("URP", "term", ()), ("レンダリングパイプライン", "term", ()),
+    ("Timeline", "term", ()), ("シェーダー", "term", ()), ("ライティング", "term", ()),
+    ("法線", "term", ()), ("ポストエフェクト", "term", ()), ("アウトライン", "term", ()),
+    ("反射", "term", ()), ("モーションキャプチャー", "term", ()), ("モーション", "term", ()),
+    ("振り付け", "term", ()), ("ボーン", "term", ()), ("フェイシャル", "term", ()),
+    ("表情", "term", ()), ("目線", "term", ()), ("揺れもの", "term", ()),
+    ("テクスチャ", "term", ()), ("ポリゴン", "term", ()), ("最適化", "term", ()),
+    ("解像度", "term", ()), ("GPU", "term", ()), ("メモリ", "term", ()),
+    ("マスターデータ", "term", ()), ("スプレッドシート", "term", ()),
+    ("自動生成", "term", ()), ("自動テスト", "term", ()), ("ゲームAI", "term", ()),
+    ("強化学習", "term", ()), ("バランス調整", "term", ()), ("デッキ探索", "term", ()),
+    ("グレーボックス最適化", "term", ()), ("シミュレーション", "term", ()),
+    ("バックエンド", "term", ()), ("基盤システム", "term", ()),
+    ("初星コミュ", "term", ()), ("縦画面コミュ", "term", ()), ("横画面コミュ", "term", ()),
+    ("演出", "term", ()), ("カメラワーク", "term", ()), ("3Dモデル", "term", ()),
+    ("背景", "term", ()), ("衣装", "term", ()), ("CEDEC", "term", ()),
 ]
 
 # 学園名簿のURL断片。花海咲季だけは /idol/ 自身が本人のページ（data-current="saki"）。
@@ -301,6 +331,44 @@ SEESAA_PAGES = [
 
 # 親愛度コミュのあらすじ（話数・台詞つき）。解釈ではなく本編の読み取りなので fan_chronicle。
 # 10名 × STEP1〜3。姫崎莉波・秦谷美鈴・雨夜燕ぶんはまだ無い。
+# 制作・技術。CEDECの講演ページ（概要・講演者・メッセージ）と、その報告記事。
+# QualiArtsの技術ブログには学マスを題に採った記事が無く、技術の詳細は
+# CEDECの講演と、それを詳しく書き起こした媒体の記事にある。
+TECH_URLS = [
+    # 講演そのもの
+    "https://cedec.cesa.or.jp/2024/session/detail/s660138bbdf4c1/",   # 3Dキャラクター・背景制作
+    "https://cedec.cesa.or.jp/2024/session/detail/s6601280795fb3/",   # レンダリングパイプライン
+    "https://cedec.cesa.or.jp/2024/session/detail/s66040e2aeca6e/",   # ゲームAIによるバランス調整
+    "https://cedec.cesa.or.jp/2024/session/detail/s660150b358c6d/",   # Timelineを使ったライブ制作
+    "https://cedec.cesa.or.jp/2025/timetable/detail/s67ae9c5291bcc/", # コミュができるまで
+    "https://cedec.cesa.or.jp/2025/timetable/detail/s67a5b1155ef14/", # バックエンドの基盤
+    "https://cedec.cesa.or.jp/2025/timetable/detail/s679c66603fcbd/", # 開発ラインの量産
+    "https://cedec.cesa.or.jp/2025/timetable/detail/s67a303bc65ad8/", # 自動テストの運用
+    "https://cedil.cesa.or.jp/cedil_sessions/view/2936",
+    "https://cedil.cesa.or.jp/cedil_sessions/view/2963",
+    "https://cedil.cesa.or.jp/cedil_sessions/view/3000",
+    "https://cedil.cesa.or.jp/cedil_sessions/view/3196",
+    "https://technote.qualiarts.jp/article/81/",
+    # 講演の報告記事。講演ページより本文が厚い
+    "https://cgworld.jp/article/202410-cedec-imas.html",
+    "https://gamemakers.jp/article/2025_01_29_90729/",
+    "https://gamemakers.jp/article/2025_11_07_119247/",
+    "https://game.watch.impress.co.jp/docs/kikaku/2033720.html",
+    "https://game.watch.impress.co.jp/docs/kikaku/1617554.html",
+    "https://www.gamer.ne.jp/news/202507260018/",
+    "https://www.inside-games.jp/article/2025/08/23/170854.html",
+    "https://www.4gamer.net/games/778/G077853/20250729037/",
+    "https://www.4gamer.net/games/778/G077853/20240822037/",
+    "https://www.4gamer.net/games/778/G077853/20240822052/",
+    "https://www.famitsu.com/article/202408/14977",
+    "https://www.famitsu.com/article/202408/15013",
+    "https://www.famitsu.com/article/202408/15047",
+    "https://news.denfaminicogamer.jp/news/240909a",
+    "https://learning.unity3d.jp/10126/",
+    # 技術系資料の索引（ここから上のURLを辿った）
+    "https://note.com/kaido_729/n/n1ca9dc9bf9df",
+]
+
 NOTE_BASE = "https://note.com/makura_1210/n/"
 NOTE_KEYS = [
     "n70c9ba38e690", "n9cd66403d880", "n71b0cc38d94e", "n6ae46b0d3e45", "nf4d169551f03",
@@ -588,7 +656,7 @@ def main() -> int:
             urls = [BASE + p for p in OTHER_PATHS + [q for q, _ in IDOL_PATHS]]
             urls += [WIKIPEDIA] + [f"{WIKI_BASE}{i}" for i in WIKI_SYSTEM]
             urls += [SEESAA_BASE + urllib.parse.quote(n.encode("euc_jp")) for n in SEESAA_PAGES]
-            urls += [NOTE_BASE + k for k in NOTE_KEYS]
+            urls += [NOTE_BASE + k for k in NOTE_KEYS] + TECH_URLS
             for url in urls:
                 try:
                     r = ingest.ingest_url(store, url, respect_robots=args.robots)
