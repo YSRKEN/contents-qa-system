@@ -391,6 +391,17 @@ def retrieve(
         return (6.0 if named else 0.0) + min(
             sum(weights.get(t, 0) * 2 for t in terms if t and t in section), 4.0)
 
+    # 質問が対象を名指ししているなら、それは語の一致より強い手がかりになる。
+    # 「NIAの際に白草四音が行った嫌がらせは？」のような質問では、「NIA」「行っ」の
+    # ような語が攻略記事や開発の記事に大量に当たり、名指しされた人物の出てくる場面が
+    # 枠の外へ押し出される。
+    # 人物が名指しされていれば、その人物を手がかりにする。用語（「NIA」「親愛度」）は
+    # 攻略記事のように、その用語の説明そのものである出典に大量に付くので、
+    # 「誰が何をしたか」を訊く質問では場面を絞る手がかりにならない。
+    kinds = {e["name"]: e["kind"] for e in entity_rows}
+    people = {n for n in ents if kinds.get(n) in ("character", "person")}
+    named = people or set(ents)
+
     def group_value(key: tuple[int, str], items: list[tuple[float, dict]]) -> float:
         """その群から実際に渡す分（per_group 件）が、どれだけの内容を持つか。
 
@@ -407,9 +418,16 @@ def retrieve(
         # その節は問われている当の対象についての記述そのものだから。
         # （割り引きは、名言集のように見出しが単なる帰属ラベルである場合のために、
         #   主張を1件ずつ並べる先頭の枠のほうで効かせる）
+        # 質問が対象を名指ししているなら、その対象に触れている主張だけで群を比べる。
+        # そうしないと、名前が一度出てくるだけの大きな攻略記事が、語の当たりの量で
+        # 勝ってしまう。知りたいのはその対象についての記述が濃い場所のほう。
+        scoring = [(sc, c) for sc, c in items
+                   if named & set(c.get("entities") or ())] if named else items
+        if not scoring:
+            scoring = items
         weighted = {
             c["id"]: topical.get(c["id"], sc) * informative_length(split_section(c["text"])[1]) / 60
-            for sc, c in items
+            for sc, c in scoring
         }
         if not ids_of:
             return sum(weighted.values())
@@ -420,11 +438,6 @@ def retrieve(
         # 出典の優先順を効かせる。感想noteの節が公式・記事の節を押しのけないように
         return base * (0.5 + items[0][1].get("priority", 0) / 200)
 
-    # 質問が対象を名指ししているなら、その対象に触れていない群は節ごと読み込まない。
-    # 「NIAの際に白草四音が行った嫌がらせは？」のような質問では、「NIA」「行っ」の
-    # ような語が開発の記事に大量に当たり、名指しされた人物の出てくる場面が
-    # 枠の外へ押し出される。名指しは語の一致より強い手がかりなので、そちらを優先する。
-    named = set(ents)
     about_named = {
         key for key, items in by_group.items()
         if any(named & set(c.get("entities") or ()) for _, c in items)
@@ -467,7 +480,11 @@ def retrieve(
     per_section = 3
     used_sections: dict[tuple[int, str], int] = {}
     head_shingles: list[set[str]] = []
-    for _, c in ranked:
+    # 先頭の枠にも名指しを効かせる。語の一致だけで並べると、「NIA」のような語が
+    # 題名に入った攻略記事が枠を埋め、名指しされた人物の場面が入らない。
+    about = [c for _, c in ranked if named & set(c.get("entities") or ())]
+    head_rows = about if len(about) >= head_budget else [c for _, c in ranked]
+    for c in head_rows:
         if len(claims) >= head_budget:
             break
         key = (int(c["source_version_id"] or 0), split_section(c["text"])[0])
@@ -487,7 +504,9 @@ def retrieve(
         if c["id"] not in seen:
             seen.add(c["id"])
             claims.append(c)
-    for _, c in ranked:
+    # 残りを埋めるときも、名指しがあるならその対象に触れる主張から埋める。
+    # ここを素の順位に任せると、head と節ごとの切り出しで絞った意味が消える。
+    for c in head_rows:
         if len(claims) >= max_claims:
             break
         if c["id"] in seen:

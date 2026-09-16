@@ -508,6 +508,15 @@ def ingest_subject_page(store, version_id: int, canonical: str) -> int:
 
     自動抽出に任せると、本文に名前が出ない文が落ちるか、
     たまたま同じ文に出てきた別の名前だけに紐づいてしまう。
+
+    **どの名前にも触れない文を落とさない**。物語の地の文とセリフは
+    「理解に苦しみますね。」「その努力は、無駄だというのに。」のように
+    誰も名指ししない。名前で絞ると、場面のやり取りが丸ごと消えて
+    「登場した」「立ち去った」という地の文しか残らなくなる。
+    このページ全体がその人物についての記述なので、絞る必要がない。
+
+    節の中で名前の出た人物は、その節の文すべてに結び付ける。会話の相手は
+    場面の初めに一度名乗るだけで、以後は「彼女」「相手のアイドル」になる。
     """
     if has_claims(store, version_id):
         return 0
@@ -516,10 +525,33 @@ def ingest_subject_page(store, version_id: int, canonical: str) -> int:
     n = 0
     from cqs import extract
 
-    for c in extract.dedupe(extract.candidate_sentences(v["text"], entities=list(surfaces))):
-        if extract.in_reference_section(c["section"]):
+    cands = [c for c in extract.dedupe(extract.candidate_sentences(v["text"]))
+             if not extract.in_reference_section(c["section"])]
+    # 節ごとに、その節のどこかで名前の出た人物を集める。主張になった文だけでなく
+    # 原文の節の範囲を見る。「白草四音。」のような短い行は文として採られないが、
+    # そこが場面の中で唯一その人物を名指ししている箇所ということがある。
+    text = v["text"]
+    spans: dict[str, list[int]] = {}
+    for c in cands:
+        c["_found"] = {canon for surface, canon in surfaces.items()
+                       if surface in c["text"] or surface in (c["section"] or "")}
+        if c["offset"] is None:
             continue
-        ents = sorted({surfaces[s] for s in c["entities"]} | {canonical})
+        lo, hi = c["offset"], c["offset"] + len(c["text"])
+        cur = spans.get(c["section"] or "")
+        spans[c["section"] or ""] = [min(cur[0], lo), max(cur[1], hi)] if cur else [lo, hi]
+
+    in_section: dict[str, set[str]] = {}
+    for c in cands:
+        sec = c["section"] or ""
+        in_section.setdefault(sec, set()).update(c["_found"])
+    for sec, (lo, hi) in spans.items():
+        window = text[lo:hi]
+        in_section.setdefault(sec, set()).update(
+            canon for surface, canon in surfaces.items() if surface in window)
+
+    for c in cands:
+        ents = sorted(c["_found"] | in_section.get(c["section"] or "", set()) | {canonical})
         head = f"{c['section']}: " if c["section"] else ""
         store.add_claim(
             text=f"{canonical} / {head}{c['text']}",

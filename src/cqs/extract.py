@@ -46,6 +46,9 @@ def is_fragment(sentence: str) -> bool:
 _HEADING_WRAPPED = re.compile(r"^[<＜【〔［\[]\s*(.+?)\s*[>＞】〕］\]]$")
 _HEADING_MD = re.compile(r"^#{1,6}\s+(.+)$")
 _LEADING_SYMBOLS = re.compile(r"^[^\w\u3040-\u30ff\u4e00-\u9fff]+")
+# 行末の助詞。ここで終わる行は文の途中であって、見出しではない。
+# 「や」「か」は名前の末尾に来る（「かぐや」「はるか」）ので入れない。
+_PARTICLE_ENDINGS = "はがをにへもでと、"
 # 見出しの位置に現れるが見出しではない語（Wikiの編集リンクなど）
 _NOT_A_HEADING = re.compile(r"^(編集|ソースを編集|続きを読む|目次|関連記事|広告|スポンサーリンク|PR)$")
 # 見出しの末尾に付くWikiの編集リンク（「概要[編集]」）
@@ -84,6 +87,15 @@ def heading_of(line: str, *, max_len: int = 26) -> str | None:
             return None
         return core
     if len(line) > max_len or line.endswith(_SENTENCE_END) or re.search(r"[。、．，]", line):
+        return None
+    # 鉤括弧で始まる行はセリフ。短くても見出しではない。
+    # （「へえ？まさかとは思いますが……」が見出しになると、そこで場面が切れて
+    #   前半に出ていた人物名が後半の文に引き継がれなくなる）
+    if line[:1] in "「『":
+        return None
+    # 助詞で終わる行は文の途中。「Ｐは」「と言葉を重ねますが、彼女は」など。
+    # 言いさしの記号（「麻央は…」）は落としてから見る。
+    if line.rstrip("…‥・.．").endswith(tuple(_PARTICLE_ENDINGS)):
         return None
     core = _LEADING_SYMBOLS.sub("", line).strip()
     if core and len(core) <= max_len and _HAS_JA.search(core) and not _NOT_A_HEADING.match(core):

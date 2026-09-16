@@ -41,3 +41,28 @@ def test_編集リンク行そのものは主張にならない():
 def test_見出し末尾の編集リンクは落とす():
     assert extract.heading_of("## 概要[編集]") == "概要"
     assert extract.heading_of("[編集]") is None
+
+
+def test_セリフの行は節見出しにならない():
+    """物語の資料は短いセリフが並ぶ。見出しと読むとそこで場面が切れ、
+    前半に出ていた人物名が後半の文に引き継がれなくなる。"""
+    text = (
+        "## 第17話：センパイが選んだアイドル\n"
+        "現れたのは白草四音でした。\n"
+        "「へえ？まさかとは思いますが……\n"
+        "諦めなければ、夢は叶うとでも？」\n"
+        "アイドルとしての才能は欠片もない。\n"
+    )
+    got = extract.candidate_sentences(text)
+    assert {c["section"] for c in got} == {"第17話：センパイが選んだアイドル"}
+    assert "アイドルとしての才能は欠片もない。" in _texts(got)
+
+
+def test_助詞や言いさしで終わる行は節見出しにならない():
+    assert extract.heading_of("Ｐは") is None
+    assert extract.heading_of("と言葉を重ねますが、彼女は") is None
+    assert extract.heading_of("そんな四音の言葉に麻央は…") is None
+    # 名前の末尾に来るひらがな（「かぐや」「はるか」）は助詞扱いしない
+    assert extract.heading_of("かぐや") == "かぐや"
+    assert extract.heading_of("はるか") == "はるか"
+    assert extract.heading_of("交友関係") == "交友関係"
