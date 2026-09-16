@@ -294,6 +294,7 @@ SEESAA_PAGES = [
     "【標】有村麻央", "【ガラクタロード】十王星南", "【「ねえ、言っちゃうよ。」】秦谷美鈴",
     "もうすぐ本番ですね", "【ときめきエモーション】葛城リーリヤ", "【冠菊】葛城リーリヤ",
     "用語集", "スキルカード一覧/Pアイドル固有", "プロデュースカード雛形",
+    "WEB記事一覧",
     "【「ねえ、言っちゃうよ。」】十王星南", "H.I.F", "【「ねえ、言っちゃうよ。」】月村手毬",
     "おやすみのふたり", "【赤裸々】十王星南", "【自己肯定感爆上げ↑↑しゅきしゅきソング】藤田ことね",
     "プロデューサーランキング", "【一体いつから】月村手毬", "楽曲一覧",
@@ -665,6 +666,17 @@ def main() -> int:
                     continue
                 print(f"  ○ {r['text_length']:>6}字 v{r['version_no']} {url}")
                 by_url[url] = r["source_version_id"]
+
+            if not args.no_refs:
+                extra = [u for u in index_links(store, by_url) if u not in by_url]
+                print(f"索引ページから外部リンク {len(extra)} 件")
+                for url in extra:
+                    try:
+                        r = ingest.ingest_url(store, url, respect_robots=args.robots)
+                    except Exception as e:
+                        print(f"  × {url}: {e}")
+                        continue
+                    by_url[url] = r["source_version_id"]
 
             if not args.no_refs and WIKIPEDIA in by_url:
                 # 記事本文より脚注の外部リンクのほうが本体。未取得ぶんを原資料として取り込む
